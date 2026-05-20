@@ -45,8 +45,15 @@ import Markdown from "react-markdown";
 import { ASSISTANT_PERSONAS } from "./personas";
 import { ChatMessage, ChatSession, ModelOption } from "./types";
 import { CodeBlock } from "./components/CodeBlock";
+import AuthModal from "./components/AuthModal";
+import OwnerDashboard from "./components/OwnerDashboard";
 
 export default function App() {
+  // Custom User Session Authentication and Administrative Dashboard Controls
+  const [loggedUser, setLoggedUser] = useState<any>(null);
+  const [authModalOpen, setAuthModalOpen] = useState(false);
+  const [dashboardOpen, setDashboardOpen] = useState(false);
+
   // Chat state
   const [sessions, setSessions] = useState<ChatSession[]>(() => {
     try {
@@ -190,6 +197,39 @@ export default function App() {
     autoTriggerInitialPing();
     fetchWorkspaceFiles();
     fetchVault();
+
+    // Check custom persistent sessions matching a registered account
+    try {
+      const stored = localStorage.getItem("nexus_user");
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        setLoggedUser(parsed);
+        if (parsed && parsed.email) {
+          // Re-validate and pull down latest saved cloud-history from DB
+          fetch("/api/auth/signin", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ email: parsed.email, googleAuth: parsed.googleAuth, password: parsed.password })
+          })
+          .then((res) => res.json())
+          .then((data) => {
+            if (data && data.success && data.user) {
+              setLoggedUser(data.user);
+              localStorage.setItem("nexus_user", JSON.stringify(data.user));
+              if (Array.isArray(data.user.history) && data.user.history.length > 0) {
+                setSessions(data.user.history);
+                if (data.user.history[0]?.id) {
+                  setActiveSessionId(data.user.history[0].id);
+                }
+              }
+            }
+          })
+          .catch((err) => console.warn("Failed checking user sync state:", err));
+        }
+      }
+    } catch (e) {
+      console.error("Failed loading persistent user identity state:", e);
+    }
     
     // Automatically close columns on mobile on initial render map to prevent crowding
     if (window.innerWidth < 1024) {
@@ -198,6 +238,26 @@ export default function App() {
       setIsRightColOpen(false);
     }
   }, []);
+
+  const handleLogActiveUserOut = () => {
+    localStorage.removeItem("nexus_user");
+    localStorage.removeItem("ai_chat_portal_sessions");
+    setLoggedUser(null);
+    setSessions([
+      {
+        id: "session-default",
+        title: "Main General Portal",
+        messages: [],
+        createdAt: new Date().toISOString(),
+        personaId: "general",
+        modelId: "gemini-3.5-flash",
+        temperature: 0.7,
+        systemInstruction: ""
+      }
+    ]);
+    setActiveSessionId("session-default");
+    pushActivityLog("Account de-authorized and logged out successfully.", "info");
+  };
 
   const fetchWorkspaceFiles = async () => {
     try {
@@ -345,12 +405,28 @@ export default function App() {
     }
   };
 
-  // Save sessions to localStorage whenever they change
+  // Save sessions to localStorage & sync back to custom persistence on the backend
   useEffect(() => {
     if (sessions.length > 0) {
       localStorage.setItem("ai_chat_portal_sessions", JSON.stringify(sessions));
+      
+      // Perform background custom user synchronization
+      if (loggedUser && loggedUser.email) {
+        fetch("/api/user/sync-history", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            email: loggedUser.email,
+            history: sessions
+          })
+        })
+        .then((res) => {
+          if (!res.ok) console.warn("Incremental history backup failed.");
+        })
+        .catch((e) => console.error("Database connection dropped during save sync:", e));
+      }
     }
-  }, [sessions]);
+  }, [sessions, loggedUser]);
 
   // Handle auto-scroll to bottom of conversation thread
   useEffect(() => {
@@ -1755,6 +1831,41 @@ If you call an action, the pipeline will intercept and execute it automatically.
           </div>
 
           <div className="flex items-center gap-3">
+            {loggedUser ? (
+              <div className="flex items-center gap-2">
+                {(loggedUser.role === "owner" || loggedUser.role === "admin") && (
+                  <button
+                    onClick={() => setDashboardOpen(true)}
+                    className="flex h-7 px-2.5 items-center justify-center gap-1.5 rounded border border-[#00cfc0] bg-[#00cfc0]/15 hover:bg-[#00cfc0]/25 text-[#00cfc0] text-[10px] font-bold tracking-wider cursor-pointer transition-all uppercase select-none shadow-[0_0_8px_rgba(0,207,192,0.3)] animate-pulse font-mono"
+                    title="Launch Owner Dashboard and audit website metrics"
+                  >
+                    <Shield size={11} />
+                    <span>Dashboard</span>
+                  </button>
+                )}
+                <div className="hidden lg:flex flex-col text-[9px] text-slate-400 font-mono text-right leading-tight max-w-[120px]">
+                  <span className="text-[#00cfc0] font-bold truncate block" title={loggedUser.email}>{loggedUser.email}</span>
+                  <span className="uppercase tracking-widest text-[8px] text-slate-500">{loggedUser.role}</span>
+                </div>
+                <button
+                  onClick={handleLogActiveUserOut}
+                  className="flex h-7 px-2.5 items-center justify-center rounded border border-slate-800 text-slate-400 hover:text-slate-100 hover:bg-slate-900 bg-transparent text-[10px] font-bold cursor-pointer font-mono uppercase"
+                  title="Disconnect and log out"
+                >
+                  Log out
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={() => setAuthModalOpen(true)}
+                className="flex h-7 px-2.5 items-center justify-center gap-1.5 border border-amber-500/40 bg-amber-500/10 hover:bg-amber-500/25 text-amber-400 text-[10px] font-bold tracking-wider cursor-pointer transition-all uppercase select-none rounded font-mono animate-pulse"
+                title="Sign in or register an account"
+              >
+                <User size={11} />
+                <span>Sign In</span>
+              </button>
+            )}
+
             <button
               onClick={() => setIsRightColOpen(!isRightColOpen)}
               className={`flex h-7 px-2.5 items-center justify-center gap-1.5 rounded border text-[10px] font-bold tracking-wider cursor-pointer transition-all uppercase select-none
@@ -2705,6 +2816,43 @@ If you call an action, the pipeline will intercept and execute it automatically.
 
           </div>
         </div>
+      )}
+
+      {/* Render custom Dual-Factor Simulated google Auth verification modal */}
+      {authModalOpen && (
+        <AuthModal
+          onSuccess={(user) => {
+            setLoggedUser(user);
+            localStorage.setItem("nexus_user", JSON.stringify(user));
+            if (Array.isArray(user.history) && user.history.length > 0) {
+              setSessions(user.history);
+              if (user.history[0]?.id) {
+                setActiveSessionId(user.history[0].id);
+              }
+            } else {
+              // If new user with empty history, trigger history sync using current sandbox chat to match "literally make everything saved"
+              fetch("/api/user/sync-history", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                  email: user.email,
+                  history: sessions
+                })
+              }).catch((e) => console.warn("Failed background user init history sync:", e));
+            }
+            setAuthModalOpen(false);
+            pushActivityLog(`Identity authenticated successfully as ${user.email}.`, "success");
+          }}
+          onClose={() => setAuthModalOpen(false)}
+        />
+      )}
+
+      {/* Render administrative owner control centre */}
+      {dashboardOpen && loggedUser && (loggedUser.role === "owner" || loggedUser.role === "admin") && (
+        <OwnerDashboard
+          adminEmail={loggedUser.email}
+          onClose={() => setDashboardOpen(false)}
+        />
       )}
 
     </div>

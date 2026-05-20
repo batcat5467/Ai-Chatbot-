@@ -5,6 +5,7 @@ import { GoogleGenAI } from "@google/genai";
 import dotenv from "dotenv";
 import * as cheerio from "cheerio";
 import AdmZip from "adm-zip";
+import fs from "fs";
 
 dotenv.config();
 
@@ -575,6 +576,542 @@ app.post("/api/agent/files/delete", (req, res) => {
     res.json({ success: true, message: `Node '${name}' successfully purged from storage.` });
   } catch (err: any) {
     res.status(500).json({ error: `Failed to remove node: ${err.message}` });
+  }
+});
+
+// ============================================
+// PERSISTENT CUSTOM DATABASE & AUTH ENGINE
+// ============================================
+
+const DB_FILE_PATH = path.join(process.cwd(), "nexus_db.json");
+
+interface UserRecord {
+  email: string;
+  password?: string;
+  role: "owner" | "admin" | "user";
+  createdAt: string;
+  signInCount: number;
+  lastSignInAt: string | null;
+  googleAuth: boolean;
+  status: "active" | "suspended";
+  verificationCode?: string | null;
+  history: any[]; // ChatSession[]
+}
+
+interface SystemLog {
+  timestamp: string;
+  level: "info" | "warning" | "success" | "error";
+  event: string;
+}
+
+interface NexusDatabase {
+  users: UserRecord[];
+  systemLogs: SystemLog[];
+}
+
+// Initial default database state
+const defaultDbState: NexusDatabase = {
+  users: [
+    {
+      email: "y48455577@gmail.com",
+      password: "owner123",
+      role: "owner",
+      createdAt: new Date().toISOString(),
+      signInCount: 0,
+      lastSignInAt: null,
+      googleAuth: false,
+      status: "active",
+      history: []
+    }
+  ],
+  systemLogs: [
+    {
+      timestamp: new Date().toISOString(),
+      level: "success",
+      event: "Nexus Portal persistent database initialized. Pre-registered Owner Account: y48455577@gmail.com"
+    }
+  ]
+};
+
+// Synchronous safe database reader
+function getDb(): NexusDatabase {
+  try {
+    if (!fs.existsSync(DB_FILE_PATH)) {
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(defaultDbState, null, 2), "utf8");
+      return defaultDbState;
+    }
+    const raw = fs.readFileSync(DB_FILE_PATH, "utf8");
+    return JSON.parse(raw);
+  } catch (err: any) {
+    console.error("[DB ERROR] Failed reading/writing database file, using memory fallback:", err.message);
+    return defaultDbState;
+  }
+}
+
+// Synchronous safe database writer
+function saveDb(data: NexusDatabase) {
+  try {
+    fs.writeFileSync(DB_FILE_PATH, JSON.stringify(data, null, 2), "utf8");
+  } catch (err: any) {
+    console.error("[DB WRITE ERROR] Could not persist state back to disk:", err.message);
+  }
+}
+
+// Helper to push a system audit log to database
+function logAudit(event: string, level: "info" | "warning" | "success" | "error" = "info") {
+  const db = getDb();
+  const entry: SystemLog = {
+    timestamp: new Date().toISOString(),
+    level,
+    event
+  };
+  db.systemLogs.unshift(entry);
+  
+  // Cap logs to avoid file bloating (max last 300 logs)
+  if (db.systemLogs.length > 300) {
+    db.systemLogs = db.systemLogs.slice(0, 300);
+  }
+  
+  saveDb(db);
+  console.log(`[AUDIT LOG] [${level.toUpperCase()}] ${event}`);
+}
+
+// 1. POST /api/auth/signup - Custom email / Google authentication signup endpoint
+app.post("/api/auth/signup", (req, res) => {
+  try {
+    const { email, password, googleAuth } = req.body;
+    if (!email) {
+      res.status(400).json({ error: "Missing email address field in payload." });
+      return;
+    }
+
+    const emailClean = email.trim().toLowerCase();
+    const db = getDb();
+    
+    // Check if user already exists
+    const existing = db.users.find((u) => u.email.toLowerCase() === emailClean);
+    if (existing) {
+      res.status(400).json({ error: `Account for ${emailClean} already registered inside the index.` });
+      return;
+    }
+
+    const newUser: UserRecord = {
+      email: emailClean,
+      password: googleAuth ? undefined : (password || "pw123"),
+      role: emailClean === "y48455577@gmail.com" ? "owner" : "user", // Auto-grant owner role if email matches the user email
+      createdAt: new Date().toISOString(),
+      signInCount: 0,
+      lastSignInAt: null,
+      googleAuth: !!googleAuth,
+      status: "active",
+      verificationCode: null,
+      history: []
+    };
+
+    db.users.push(newUser);
+    saveDb(db);
+    logAudit(`New user account registered successfully: ${emailClean} (Method: ${googleAuth ? "Google OTP" : "Email/Password"})`, "success");
+
+    res.json({
+      success: true,
+      message: `Account created successfully for ${emailClean}. Enjoy using your new workspace.`,
+      user: {
+        email: newUser.email,
+        role: newUser.role,
+        googleAuth: newUser.googleAuth,
+        status: newUser.status,
+        history: []
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Signup operation aborted: ${err.message}` });
+  }
+});
+
+// 2. POST /api/auth/signin - Custom Sign-in with simulated Google Auth Verification Code code-hints
+app.post("/api/auth/signin", (req, res) => {
+  try {
+    const { email, password, googleAuth } = req.body;
+    if (!email) {
+      res.status(400).json({ error: "Email parameter is required." });
+      return;
+    }
+
+    const emailClean = email.trim().toLowerCase();
+    const db = getDb();
+    let user = db.users.find((u) => u.email.toLowerCase() === emailClean);
+
+    // Dynamic Auto-Signup for Google Auth if they don't have an account
+    if (!user && googleAuth) {
+      const isOwner = emailClean === "y48455577@gmail.com";
+      user = {
+        email: emailClean,
+        role: isOwner ? "owner" : "user",
+        createdAt: new Date().toISOString(),
+        signInCount: 0,
+        lastSignInAt: null,
+        googleAuth: true,
+        status: "active",
+        verificationCode: null,
+        history: []
+      };
+      db.users.push(user);
+      saveDb(db);
+      logAudit(`Auto-registered Google Auth profile for traveler: ${emailClean}`, "success");
+    }
+
+    if (!user) {
+      res.status(404).json({ error: "account matching this email doesn't exist. Please sign up first." });
+      return;
+    }
+
+    if (user.status === "suspended") {
+      res.status(403).json({ error: "Access denied. This profile has been permanently suspended by administration." });
+      return;
+    }
+
+    // Google Login validation flow
+    if (googleAuth) {
+      // Always generate a random 6-digit confirmation code code whenever signing into google
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      user.verificationCode = code;
+      
+      // Sync DB
+      saveDb(db);
+      logAudit(`Google login initiated for ${emailClean}. Verification code queued: ${code}`, "warning");
+      
+      // Returns verification status + code hint for the UI debugger to make testing painless
+      res.json({
+        success: true,
+        googleAuthRequired: true,
+        email: emailClean,
+        codeHint: code,
+        message: "Google account detected. A mandatory 6-digit verification security code has been generated."
+      });
+      return;
+    }
+
+    // Standard Email Auth validation
+    if (user.password !== password) {
+      res.status(401).json({ error: "Invalid password for this account. Please verify credentials." });
+      return;
+    }
+
+    // Successful authentications
+    user.signInCount += 1;
+    user.lastSignInAt = new Date().toISOString();
+    saveDb(db);
+    logAudit(`User signed in safely: ${emailClean}`, "success");
+
+    res.json({
+      success: true,
+      user: {
+        email: user.email,
+        role: user.role,
+        googleAuth: user.googleAuth,
+        status: user.status,
+        history: user.history || []
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Auth entry failure: ${err.message}` });
+  }
+});
+
+// 3. POST /api/auth/verify-google-code - Validate the queued Google signin token
+app.post("/api/auth/verify-google-code", (req, res) => {
+  try {
+    const { email, code } = req.body;
+    if (!email || !code) {
+      res.status(400).json({ error: "Missing email identifier or 6-digit verification code." });
+      return;
+    }
+
+    const emailClean = email.trim().toLowerCase();
+    const db = getDb();
+    const user = db.users.find((u) => u.email.toLowerCase() === emailClean);
+
+    if (!user) {
+      res.status(404).json({ error: "Identity token broken: User is not recognized." });
+      return;
+    }
+
+    if (user.status === "suspended") {
+      res.status(403).json({ error: "Access denied. Suspended account status." });
+      return;
+    }
+
+    if (!user.verificationCode || user.verificationCode !== String(code).trim()) {
+      res.status(400).json({ error: "Incorrect or stale verification code. Please check your simulated OTP and try again." });
+      return;
+    }
+
+    // Clears active OTP block
+    user.verificationCode = null;
+    user.signInCount += 1;
+    user.lastSignInAt = new Date().toISOString();
+    
+    saveDb(db);
+    logAudit(`Simulated Google credentials verified. Auth handshake success: ${emailClean}`, "success");
+
+    res.json({
+      success: true,
+      user: {
+        email: user.email,
+        role: user.role,
+        googleAuth: user.googleAuth,
+        status: user.status,
+        history: user.history || []
+      }
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Google verification handshake dropped: ${err.message}` });
+  }
+});
+
+// 4. POST /api/user/sync-history - Write full history updates to cloud-virtual storage
+app.post("/api/user/sync-history", (req, res) => {
+  try {
+    const { email, history } = req.body;
+    if (!email || !Array.isArray(history)) {
+      res.status(400).json({ error: "Sync rejected: Invalid payload or email." });
+      return;
+    }
+
+    const emailClean = email.trim().toLowerCase();
+    const db = getDb();
+    const user = db.users.find((u) => u.email.toLowerCase() === emailClean);
+
+    if (!user) {
+      res.status(404).json({ error: `User reference ${emailClean} not synchronized in active index.` });
+      return;
+    }
+
+    user.history = history;
+    saveDb(db);
+    console.log(`[SYNC ENGINE] Synchronized ${history.length} conversation nodes for user: "${emailClean}"`);
+    res.json({ success: true, count: history.length });
+  } catch (err: any) {
+    res.status(500).json({ error: `Sync synchronization failure: ${err.message}` });
+  }
+});
+
+// ============================================
+// OWNER & ADMIN CONTROL PANEL DASHBOARD ENDPOINTS
+// ============================================
+
+// Helper to assert owner or administration status
+function verifyAdminRole(email: string): boolean {
+  const emailClean = (email || "").trim().toLowerCase();
+  const db = getDb();
+  const user = db.users.find((u) => u.email.toLowerCase() === emailClean);
+  return !!user && (user.role === "owner" || user.role === "admin");
+}
+
+// 5. GET /api/admin/metrics - Collect global analytics, accounts, logs, histories
+app.get("/api/admin/metrics", (req, res) => {
+  try {
+    const requesterEmail = req.query.adminEmail as string;
+    if (!requesterEmail || !verifyAdminRole(requesterEmail)) {
+      res.status(403).json({ error: "Access denied. Requires Owner or Admin authority." });
+      return;
+    }
+
+    const db = getDb();
+    
+    // Core database metrics aggregation
+    const totalUsers = db.users.length;
+    const googleUsersCount = db.users.filter((u) => u.googleAuth).length;
+    
+    let totalSessions = 0;
+    let totalMessages = 0;
+
+    db.users.forEach((u) => {
+      const userSessions = Array.isArray(u.history) ? u.history : [];
+      totalSessions += userSessions.length;
+      userSessions.forEach((sess) => {
+        if (sess && Array.isArray(sess.messages)) {
+          totalMessages += sess.messages.length;
+        }
+      });
+    });
+
+    res.json({
+      success: true,
+      stats: {
+        totalUsers,
+        googleUsersCount,
+        totalSessions,
+        totalMessages,
+        dbSizeKb: (fs.existsSync(DB_FILE_PATH) ? fs.statSync(DB_FILE_PATH).size / 1024 : 0).toFixed(1)
+      },
+      users: db.users.map((u) => ({
+        email: u.email,
+        role: u.role,
+        createdAt: u.createdAt,
+        signInCount: u.signInCount,
+        lastSignInAt: u.lastSignInAt,
+        googleAuth: u.googleAuth,
+        status: u.status,
+        sessionCount: Array.isArray(u.history) ? u.history.length : 0,
+        history: u.history
+      })),
+      systemLogs: db.systemLogs || []
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: `Metrics compilation failed: ${err.message}` });
+  }
+});
+
+// 6. POST /api/admin/users/create - Insert user directly from executive controls
+app.post("/api/admin/users/create", (req, res) => {
+  try {
+    const { adminEmail, email, password, role } = req.body;
+    if (!adminEmail || !verifyAdminRole(adminEmail)) {
+      res.status(403).json({ error: "Admin privilege required." });
+      return;
+    }
+
+    if (!email) {
+      res.status(400).json({ error: "Provide a valid email." });
+      return;
+    }
+
+    const targetEmail = email.trim().toLowerCase();
+    const db = getDb();
+
+    if (db.users.some((u) => u.email.toLowerCase() === targetEmail)) {
+      res.status(400).json({ error: `account with email ${targetEmail} is already active.` });
+      return;
+    }
+
+    const newUser: UserRecord = {
+      email: targetEmail,
+      password: password || "user123",
+      role: role || "user",
+      createdAt: new Date().toISOString(),
+      signInCount: 0,
+      lastSignInAt: null,
+      googleAuth: false,
+      status: "active",
+      history: []
+    };
+
+    db.users.push(newUser);
+    saveDb(db);
+    logAudit(`Executive account spawned: [${targetEmail}] with privileges [${newUser.role}] by admin ${adminEmail}`, "success");
+
+    res.json({ success: true, message: `Account for ${targetEmail} has been added.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 7. POST /api/admin/users/update-role - Promote / demote roles
+app.post("/api/admin/users/update-role", (req, res) => {
+  try {
+    const { adminEmail, targetUserEmail, newRole } = req.body;
+    if (!adminEmail || !verifyAdminRole(adminEmail)) {
+      res.status(403).json({ error: "Requires administrator access." });
+      return;
+    }
+
+    const db = getDb();
+    const adminUser = db.users.find((u) => u.email.toLowerCase() === adminEmail.toLowerCase().trim());
+    const targetUser = db.users.find((u) => u.email.toLowerCase() === targetUserEmail.trim().toLowerCase());
+
+    if (!targetUser) {
+      res.status(404).json({ error: `User with email ${targetUserEmail} not registered.` });
+      return;
+    }
+
+    // Only owners can promote somebody to Owner or modify existing owners
+    if (newRole === "owner" && adminUser?.role !== "owner") {
+      res.status(403).json({ error: "Only the core creator Owner can grant full property ownership rights." });
+      return;
+    }
+
+    if (targetUser.role === "owner" && adminUser?.role !== "owner") {
+      res.status(403).json({ error: "Permission denied. Owners cannot be modified by standard administrators." });
+      return;
+    }
+
+    const prevRole = targetUser.role;
+    targetUser.role = newRole;
+    saveDb(db);
+    logAudit(`Permissions modified: [${targetUser.email}] changed from [${prevRole}] to [${newRole}] by [${adminEmail}]`, "warning");
+
+    res.json({ success: true, message: `Role successfully updated for ${targetUser.email}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 8. POST /api/admin/users/toggle-status - Block or Suspend user accounts
+app.post("/api/admin/users/toggle-status", (req, res) => {
+  try {
+    const { adminEmail, targetUserEmail } = req.body;
+    if (!adminEmail || !verifyAdminRole(adminEmail)) {
+      res.status(403).json({ error: "Requires administrator credentials." });
+      return;
+    }
+
+    const db = getDb();
+    const adminUser = db.users.find((u) => u.email.toLowerCase() === adminEmail.toLowerCase().trim());
+    const targetUser = db.users.find((u) => u.email.toLowerCase() === targetUserEmail.trim().toLowerCase());
+
+    if (!targetUser) {
+      res.status(404).json({ error: "User profile search returned null index." });
+      return;
+    }
+
+    if (targetUser.role === "owner" && adminUser?.role !== "owner") {
+      res.status(403).json({ error: "Violation alert: Owners cannot be suspended or terminated by administrators." });
+      return;
+    }
+
+    const nextStatus = targetUser.status === "active" ? "suspended" : "active";
+    targetUser.status = nextStatus;
+    saveDb(db);
+    logAudit(`Account status updated: [${targetUser.email}] is now [${nextStatus.toUpperCase()}] by executive admin [${adminEmail}]`, nextStatus === "active" ? "info" : "error");
+
+    res.json({ success: true, message: `Account status toggled successfully to ${nextStatus}` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 9. POST /api/admin/users/delete - Total account deletion purge
+app.post("/api/admin/users/delete", (req, res) => {
+  try {
+    const { adminEmail, targetUserEmail } = req.body;
+    if (!adminEmail || !verifyAdminRole(adminEmail)) {
+      res.status(403).json({ error: "Requires full administrative priority login parameters." });
+      return;
+    }
+
+    const db = getDb();
+    const adminUser = db.users.find((u) => u.email.toLowerCase() === adminEmail.toLowerCase().trim());
+    const targetIdx = db.users.findIndex((u) => u.email.toLowerCase() === targetUserEmail.trim().toLowerCase());
+
+    if (targetIdx === -1) {
+      res.status(404).json({ error: "Specified user profile does not exist inside active indexes." });
+      return;
+    }
+
+    const targetUser = db.users[targetIdx];
+    if (targetUser.role === "owner" && adminUser?.role !== "owner") {
+      res.status(403).json({ error: "Secure error: Core Owner account cannot be deleted." });
+      return;
+    }
+
+    db.users.splice(targetIdx, 1);
+    saveDb(db);
+    logAudit(`Executive database purge: User [${targetUserEmail}] record terminated completely from indexes by admin [${adminEmail}]`, "error");
+
+    res.json({ success: true, message: `Record for ${targetUserEmail} successfully terminated from registry.` });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
   }
 });
 
