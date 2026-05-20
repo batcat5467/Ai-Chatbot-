@@ -1225,7 +1225,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
   };
 
   return (
-    <div id="nexus-portal-container" className="flex h-screen w-screen overflow-hidden bg-[#050811] font-mono text-slate-100 select-none">
+    <div id="nexus-portal-container" className="flex h-[100dvh] w-screen overflow-hidden bg-[#050811] font-mono text-slate-100 select-none">
       
       {/* On mobile screens, show dim overlay backdrops for left navigation sidebar to tap-away to close */}
       {isLeftColOpen && (

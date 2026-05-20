@@ -68,7 +68,10 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
   // User input forms
   const [typedMessage, setTypedMessage] = useState("");
   const [newServerName, setNewServerName] = useState("");
+  const [inviteJoinCode, setInviteJoinCode] = useState("");
+  const [joinError, setJoinError] = useState<string | null>(null);
   const [showAddServer, setShowAddServer] = useState(false);
+  const [inviteGenStats, setInviteGenStats] = useState<Record<string, string>>({});
   
   const [newChannelName, setNewChannelName] = useState("");
   const [newChannelDesc, setNewChannelDesc] = useState("");
@@ -109,14 +112,55 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
   };
 
   // Fetch entire bubble state
-  const fetchBubbleState = async () => {
+  const fetchBubbleState = async (currentUsername: string, currentUserColor: string) => {
     try {
-      const res = await fetch("/api/bubble/state");
+      const params = new URLSearchParams();
+      if (currentUsername) {
+        params.append("nickname", currentUsername);
+        params.append("color", currentUserColor);
+      }
+      const res = await fetch(`/api/bubble/state?${params.toString()}`);
       if (res.ok) {
         const data = await res.json();
         setServers(data.servers || []);
         setMessages(data.messages || []);
-        setFriends(data.friends || []);
+        
+        let mergedFriends = [...(data.friends || [])];
+        
+        // Reset all online statuses of dynamically added humans first
+        mergedFriends.forEach(f => {
+          if (!f.isAgent && f.id.startsWith("online-")) {
+            f.status = "offline";
+          }
+        });
+
+        if (data.activePresences) {
+          data.activePresences.forEach((presence: any) => {
+            if (presence.nickname !== currentUsername && !mergedFriends.some(f => f.name === presence.nickname)) {
+              mergedFriends.push({
+                id: `online-${presence.nickname}`,
+                name: presence.nickname,
+                status: "online",
+                isAgent: false,
+                role: "Online User",
+                avatarColor: presence.color
+              });
+            } else if (presence.nickname !== currentUsername) {
+              const existing = mergedFriends.find(f => f.name === presence.nickname);
+              if (existing) {
+                existing.status = "online";
+                if (existing.avatarColor !== presence.color) {
+                   existing.avatarColor = presence.color;
+                }
+              }
+            }
+          });
+        }
+        
+        // Filter out completely offline guests that were just ephemeral presences
+        mergedFriends = mergedFriends.filter(f => !(f.id.startsWith("online-") && f.status === "offline"));
+
+        setFriends(mergedFriends);
       }
     } catch (err) {
       console.warn("Failed fetching multi-user chat state synchronizer:", err);
@@ -125,12 +169,12 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
 
   // Synchronizer Interval
   useEffect(() => {
-    fetchBubbleState();
+    fetchBubbleState(username, userColor);
     const interval = setInterval(() => {
-      fetchBubbleState();
+      fetchBubbleState(username, userColor);
     }, 2500); // Polling every 2.5s for seamless real-time sync across multi-user nodes
     return () => clearInterval(interval);
-  }, []);
+  }, [username, userColor]);
 
   // Post scrolling trigger
   useEffect(() => {
@@ -186,7 +230,7 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
         })
       });
       if (res.ok) {
-        await fetchBubbleState(); // Pull fresh data
+        await fetchBubbleState(username, userColor); // Pull fresh data
       }
     } catch (err) {
       console.warn("Failed posting live message:", err);
@@ -204,13 +248,13 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
       const res = await fetch("/api/bubble/servers", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ name: newServerName.trim() })
+        body: JSON.stringify({ name: newServerName.trim(), nickname: username })
       });
       if (res.ok) {
         const data = await res.json();
         setNewServerName("");
         setShowAddServer(false);
-        await fetchBubbleState();
+        await fetchBubbleState(username, userColor);
         if (data.server?.id) {
           setSelectedServerId(data.server.id);
           if (data.server.channels?.length > 0) {
@@ -220,6 +264,49 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
       }
     } catch (err) {
       console.warn("Failed creating new chat workspace guild:", err);
+    }
+  };
+
+  const handleJoinServer = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!inviteJoinCode.trim()) return;
+    setJoinError(null);
+    try {
+      const res = await fetch("/api/bubble/servers/join", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ inviteCode: inviteJoinCode.trim(), nickname: username })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        setInviteJoinCode("");
+        setShowAddServer(false);
+        await fetchBubbleState(username, userColor);
+        if (data.server?.id) {
+          setSelectedServerId(data.server.id);
+          if (data.server.channels?.length > 0) {
+            setSelectedChannelId(data.server.channels[0].id);
+          }
+        }
+      } else {
+        setJoinError(data.error || "Failed to join");
+      }
+    } catch (err: any) {
+      setJoinError(err.message);
+    }
+  };
+
+  const handleGenerateInvite = async (serverId: string) => {
+    try {
+      const res = await fetch(`/api/bubble/servers/${serverId}/invite`, {
+        method: "POST"
+      });
+      if (res.ok) {
+        const data = await res.json();
+        setInviteGenStats(prev => ({ ...prev, [serverId]: data.inviteCode }));
+      }
+    } catch (err) {
+      console.warn("Failed to generate invite:", err);
     }
   };
 
@@ -243,7 +330,7 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
         setNewChannelName("");
         setNewChannelDesc("");
         setShowAddChannel(false);
-        await fetchBubbleState();
+        await fetchBubbleState(username, userColor);
         if (data.channel?.id) {
           setSelectedChannelId(data.channel.id);
         }
@@ -271,7 +358,7 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
         const data = await res.json();
         setNewFriendName("");
         setShowAddFriend(false);
-        await fetchBubbleState();
+        await fetchBubbleState(username, userColor);
         if (data.friend?.id) {
           setSelectedFriendId(data.friend.id);
           setActiveTab("dms");
@@ -320,10 +407,10 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
 
       {/* 2. Cozy Expanded Multi-Panel Interface Overlay */}
       <div
-        className={`fixed bottom-24 right-6 z-50 w-[94vw] h-[75vh] max-w-[620px] max-h-[580px] bg-[#070b19]/95 border border-[#00cfc0]/25 rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.6)] backdrop-blur-lg flex flex-col overflow-hidden font-mono text-xs select-none transition-all duration-300 ease-out transform
+        className={`fixed md:bottom-24 md:right-6 bottom-0 right-0 z-50 w-full md:w-[94vw] h-[100dvh] md:h-[75vh] md:max-w-[850px] md:max-h-[650px] bg-[#070b19]/95 border md:border-[#00cfc0]/25 rounded-none md:rounded-xl shadow-[0_12px_40px_rgba(0,0,0,0.6)] backdrop-blur-lg flex flex-col overflow-hidden font-mono text-xs select-none transition-all duration-300 ease-out transform
           ${isOpen 
-            ? "translate-y-0 scale-100 opacity-100 pointer-events-auto" 
-            : "translate-y-8 scale-95 opacity-0 pointer-events-none"
+            ? "translate-y-0 md:scale-100 opacity-100 pointer-events-auto" 
+            : "translate-y-full md:translate-y-8 md:scale-95 opacity-0 pointer-events-none"
           }`}
       >
         {/* GATEWAY GATE REGISTRATION / CHOOSE NICKNAME SCREEN */}
@@ -375,7 +462,7 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
           <div className="flex-1 flex overflow-hidden">
             
             {/* COLUMN 1: DISCORD-STYLE SERVER VERTICAL BAR */}
-            <div className="w-14 bg-slate-955 flex flex-col items-center py-3 gap-2.5 border-r border-[#00cfc0]/15 select-none shrink-0">
+            <div className="w-12 md:w-14 bg-slate-955 flex flex-col items-center py-3 gap-2.5 border-r border-[#00cfc0]/15 select-none shrink-0 overflow-y-auto scrollbar-none">
               
               {/* Home DM Hub Toggle */}
               <button
@@ -456,7 +543,7 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
             </div>
 
             {/* COLUMN 2: SUBCHANNELS LIST OR DIRECT MESSAGE PARTNER list */}
-            <div className="w-44 bg-[#050813]/90 border-r border-[#00cfc0]/10 flex flex-col justify-between select-none">
+            <div className="w-28 md:w-44 bg-[#050813]/90 border-r border-[#00cfc0]/10 flex flex-col justify-between select-none shrink-0">
               <div className="p-3 overflow-y-auto flex-1 flex flex-col">
                 
                 {activeTab === "servers" ? (
@@ -475,9 +562,24 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
 
                     {currentServer ? (
                       <div className="space-y-1">
-                        <span className="block text-[11px] font-bold text-[#00cfc0] mb-2 px-1 truncate tracking-tight uppercase">
-                          {currentServer.name}
-                        </span>
+                        <div className="flex flex-col mb-4 bg-slate-900/50 p-2 rounded border border-slate-800">
+                           <span className="block text-[11px] font-bold text-[#00cfc0] truncate tracking-tight uppercase">
+                             {currentServer.name}
+                           </span>
+                           <div className="mt-2 flex items-center justify-between">
+                             <button
+                               onClick={() => handleGenerateInvite(currentServer.id)}
+                               className="text-[9px] text-[#00cfc0] hover:text-white uppercase font-bold px-2 py-0.5 rounded border border-[#00cfc0]/40 hover:bg-[#00cfc0]/20 transition cursor-pointer"
+                             >
+                               Get Invite
+                             </button>
+                           </div>
+                           {inviteGenStats[currentServer.id] && (
+                             <div className="mt-2 text-[10px] text-emerald-400 font-mono tracking-widest bg-black p-1 text-center rounded border border-emerald-900 select-all cursor-text flex items-center justify-center relative">
+                               Code: {inviteGenStats[currentServer.id]}
+                             </div>
+                           )}
+                        </div>
                         
                         {(currentServer.channels || []).map((chan) => {
                           const isChanActive = selectedChannelId === chan.id;
@@ -592,6 +694,14 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
                     }
                   </div>
                 </div>
+                {/* Mobile Close Button */}
+                <button
+                  onClick={() => setIsOpen(false)}
+                  className="md:hidden ml-2 shrink-0 p-2 text-slate-400 hover:text-rose-400 hover:bg-rose-500/10 rounded-full transition-colors cursor-pointer"
+                  title="Close Chat"
+                >
+                  <X size={16} />
+                </button>
               </div>
 
               {/* Scrollable chat body */}
@@ -673,17 +783,20 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
         {/* Create Server Modal Backdrop Overlay */}
         {showAddServer && (
           <div className="absolute inset-0 bg-slate-950/90 z-50 flex items-center justify-center p-4">
-            <div className="w-full max-w-xs bg-slate-900 border border-[#00cfc0]/40 p-4 rounded-xl shadow-2xl">
-              <div className="flex items-center justify-between mb-3 text-slate-200">
-                <span className="font-bold uppercase tracking-wider text-[10px]">Create Guild Server</span>
+            <div className="w-full max-w-xs bg-slate-900 border border-[#00cfc0]/40 p-4 rounded-xl shadow-2xl flex flex-col gap-5">
+              <div className="flex items-center justify-between text-slate-200">
+                <span className="font-bold uppercase tracking-wider text-[10px]">Servers</span>
                 <button onClick={() => setShowAddServer(false)} className="text-slate-500 hover:text-rose-400 cursor-pointer">
                   <X size={14} />
                 </button>
               </div>
+
+              {/* Create Form */}
               <form onSubmit={handleCreateServer} className="space-y-3">
+                <span className="text-[10px] text-[#00cfc0] font-bold">CREATE NEW SERVER</span>
                 <input
                   type="text"
-                  className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-3 py-2 rounded text-xs focus:outline-none focus:border-[#00cfc0]/50"
+                  className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-3 py-2 rounded text-xs focus:outline-none focus:border-[#00cfc0]/50 mt-1"
                   placeholder="Server name (e.g. Hacking Guild)"
                   value={newServerName}
                   onChange={(e) => setNewServerName(e.target.value.substring(0, 24))}
@@ -694,6 +807,28 @@ export default function ChatBubble({ loggedUser }: ChatBubbleProps) {
                   className="w-full py-1.5 bg-[#00cfc0]/15 border border-[#00cfc0]/40 text-[#00cfc0] tracking-widest text-[9px] uppercase font-bold rounded hover:bg-[#00cfc0]/25 transition"
                 >
                   CONSTRUCT SERVER
+                </button>
+              </form>
+              
+              <div className="border-t border-slate-800/80"></div>
+              
+              {/* Join Form */}
+              <form onSubmit={handleJoinServer} className="space-y-3">
+                <span className="text-[10px] text-emerald-400 font-bold">JOIN WITH INVITE CODE</span>
+                <input
+                  type="text"
+                  className="w-full bg-slate-950 border border-slate-800 text-slate-100 px-3 py-2 rounded text-xs focus:outline-none focus:border-emerald-500/50 mt-1 uppercase"
+                  placeholder="Paste 8-char code here"
+                  value={inviteJoinCode}
+                  onChange={(e) => setInviteJoinCode(e.target.value.substring(0, 8))}
+                  required
+                />
+                {joinError && <div className="text-rose-400 text-[10px]">{joinError}</div>}
+                <button
+                  type="submit"
+                  className="w-full py-1.5 bg-emerald-500/15 border border-emerald-500/40 text-emerald-400 tracking-widest text-[9px] uppercase font-bold rounded hover:bg-emerald-500/25 transition"
+                >
+                  JOIN SERVER
                 </button>
               </form>
             </div>

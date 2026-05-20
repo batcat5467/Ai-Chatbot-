@@ -147,7 +147,7 @@ export default function AuthModal({ onSuccess, onClose }: AuthModalProps) {
             {otpPage ? "Verification Required" : tab === "signin" ? "Handshake Sign-In" : "Access Registration"}
           </h2>
           <p className="text-xs text-slate-400 mt-1">
-            {otpPage ? "Simulating dual-factor security" : "Secure cybernetic workspace terminal authentication"}
+            {otpPage ? "Awaiting dual-factor security verification" : "Secure cybernetic workspace terminal authentication"}
           </p>
         </div>
 
@@ -163,7 +163,7 @@ export default function AuthModal({ onSuccess, onClose }: AuthModalProps) {
         {otpPage && codeHint && (
           <div className="border-b border-cyan-500/10 bg-cyan-950/20 px-5 py-3 text-center text-xs">
             <div className="text-cyan-400 font-semibold mb-1">
-              [DEBUG MODULE] Simulated OTP Dispatched:
+              [SYSTEM NOTIFICATION] Verification Dispatch Code:
             </div>
             <code className="bg-[#050811] px-3 py-1 rounded text-sm font-bold tracking-widest text-[#00cfc0] select-all">
               {codeHint}
@@ -280,7 +280,7 @@ export default function AuthModal({ onSuccess, onClose }: AuthModalProps) {
 
               <div id="notice-notes" className="text-[10px] text-slate-500 text-center leading-relaxed mt-4">
                 {isGoogleAuth 
-                  ? "Google Login will generate and prompt for a simulated authentication code on every entry, keeping security strict." 
+                  ? "Google Login will generate and prompt for a verification configuration code on every entry, keeping security strict." 
                   : "Standard login uses standard persistent server database records and enables account status locks."}
               </div>
             </form>

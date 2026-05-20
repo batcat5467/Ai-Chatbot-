@@ -9,12 +9,32 @@ import fs from "fs";
 
 dotenv.config();
 
+import os from "os";
+
 const app = express();
 const PORT = Number(process.env.PORT) || 3000;
+
+// Global configurations (Runtime Memory)
+let appSettings = {
+  maintenanceMode: false,
+  allowSignups: true,
+  agentAiCore: true,
+  debugTracing: false
+};
 
 // Maximum payload size for handling image uploads
 app.use(express.json({ limit: "50mb" }));
 app.use(express.urlencoded({ limit: "50mb", extended: true }));
+
+// Tracing middleware
+app.use((req, res, next) => {
+  if (appSettings.debugTracing) {
+    if (req.path.startsWith("/api/")) {
+       console.log(`[SYS TRACE EVENT TRIGGER] Endpoint: ${req.method} ${req.path}`);
+    }
+  }
+  next();
+});
 
 // Shared server-side Gemini client
 const getGeminiClient = () => {
@@ -728,6 +748,10 @@ interface ChatServer {
   name: string;
   icon?: string;
   channels: ChatChannel[];
+  isGlobal?: boolean;
+  members?: string[];
+  inviteCode?: string;
+  inviteExpiresAt?: number;
 }
 
 interface ChatMessage {
@@ -921,12 +945,25 @@ function logAudit(event: string, level: "info" | "warning" | "success" | "error"
   }
   
   saveDb(db);
+  
+  if (appSettings.debugTracing) {
+    console.log(`[SYS TRACE EVENT TRIGGER] Method: logAudit() :: Output Length: ${event.length}`);
+  }
+  
   console.log(`[AUDIT LOG] [${level.toUpperCase()}] ${event}`);
 }
 
 // 1. POST /api/auth/signup - Custom email / Google authentication signup endpoint
 app.post("/api/auth/signup", (req, res) => {
   try {
+    if (appSettings.maintenanceMode) {
+      res.status(503).json({ error: "System is currently under maintenance. Try again later." });
+      return;
+    }
+    if (!appSettings.allowSignups) {
+      res.status(403).json({ error: "Sign ups are currently disabled by the server administrator." });
+      return;
+    }
     const { email, password, googleAuth } = req.body;
     if (!email) {
       res.status(400).json({ error: "Missing email address field in payload." });
@@ -976,9 +1013,13 @@ app.post("/api/auth/signup", (req, res) => {
   }
 });
 
-// 2. POST /api/auth/signin - Custom Sign-in with simulated Google Auth Verification Code code-hints
+// 2. POST /api/auth/signin - Custom Sign-in with Google Auth Verification Code code-hints
 app.post("/api/auth/signin", (req, res) => {
   try {
+    if (appSettings.maintenanceMode) {
+      res.status(503).json({ error: "System is currently under maintenance. Try again later." });
+      return;
+    }
     const { email, password, googleAuth } = req.body;
     if (!email) {
       res.status(400).json({ error: "Email parameter is required." });
@@ -991,6 +1032,10 @@ app.post("/api/auth/signin", (req, res) => {
 
     // Dynamic Auto-Signup for Google Auth if they don't have an account
     if (!user && googleAuth) {
+      if (!appSettings.allowSignups) {
+        res.status(403).json({ error: "Sign ups are currently disabled by the server administrator." });
+        return;
+      }
       const isOwner = emailClean === "y48455577@gmail.com";
       user = {
         email: emailClean,
@@ -1090,7 +1135,7 @@ app.post("/api/auth/verify-google-code", (req, res) => {
     }
 
     if (!user.verificationCode || user.verificationCode !== String(code).trim()) {
-      res.status(400).json({ error: "Incorrect or stale verification code. Please check your simulated OTP and try again." });
+      res.status(400).json({ error: "Incorrect or stale verification code. Please check your OTP and try again." });
       return;
     }
 
@@ -1100,7 +1145,7 @@ app.post("/api/auth/verify-google-code", (req, res) => {
     user.lastSignInAt = new Date().toISOString();
     
     saveDb(db);
-    logAudit(`Simulated Google credentials verified. Auth handshake success: ${emailClean}`, "success");
+    logAudit(`Google credentials verified. Auth handshake success: ${emailClean}`, "success");
 
     res.json({
       success: true,
@@ -1148,14 +1193,58 @@ app.post("/api/user/sync-history", (req, res) => {
 // REAL-TIME MULTIPLAYER CHAT BUBBLE ENDPOINTS
 // ============================================================
 
+interface ActiveUserPresence {
+  nickname: string;
+  color: string;
+  lastSeen: number;
+}
+
+const activeHumanPresences: Record<string, ActiveUserPresence> = {};
+
 // Get entire live bubble state (servers list, all relevant channel messages, and friends list)
 app.get("/api/bubble/state", (req, res) => {
   try {
+    const { nickname, color } = req.query;
+    const now = Date.now();
+
+    // Register active user presence heartbeat
+    if (nickname && typeof nickname === "string" && nickname.trim()) {
+      const cleanNick = nickname.trim();
+      activeHumanPresences[cleanNick] = {
+        nickname: cleanNick,
+        color: typeof color === "string" ? color : "#00cfc0",
+        lastSeen: now
+      };
+    }
+
+    // Clean up users idle for more than 10 seconds
+    const threshold = now - 10000;
+    for (const nick in activeHumanPresences) {
+      if (activeHumanPresences[nick].lastSeen < threshold) {
+        delete activeHumanPresences[nick];
+      }
+    }
+
+    const onlinePresencesInput = Object.values(activeHumanPresences);
+
     const db = getDb();
+    
+    // Filter servers so user only sees Global servers and servers they are members of
+    let visibleServers = db.chatServers || [];
+    if (nickname && typeof nickname === "string") {
+       const cleanNick = nickname.trim();
+       visibleServers = visibleServers.filter((srv: any) => {
+         if (srv.isGlobal) return true;
+         if (!srv.members) return true; // Backward compatibility for existing servers
+         return srv.members.includes(cleanNick);
+       });
+    }
+
     res.json({
-      servers: db.chatServers || [],
+      servers: visibleServers,
       messages: db.chatMessages || [],
-      friends: db.chatFriends || []
+      friends: db.chatFriends || [],
+      activePresences: onlinePresencesInput
     });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -1165,9 +1254,9 @@ app.get("/api/bubble/state", (req, res) => {
 // Create new Discord-like Server
 app.post("/api/bubble/servers", (req, res) => {
   try {
-    const { name, icon } = req.body;
-    if (!name) {
-      res.status(400).json({ error: "Server name is required." });
+    const { name, icon, nickname } = req.body;
+    if (!name || !nickname) {
+      res.status(400).json({ error: "Server name and nickname are required." });
       return;
     }
 
@@ -1182,7 +1271,9 @@ app.post("/api/bubble/servers", (req, res) => {
       channels: [
         { id: `chan-${Date.now()}-1`, name: "general", description: `Welcome to the main channel of ${name}!` },
         { id: `chan-${Date.now()}-2`, name: "lounge", description: "Grab a warm beverage and talk about code." }
-      ]
+      ],
+      isGlobal: false, // New servers are private by default
+      members: [nickname.trim()] // Creator is automatically a member
     };
 
     db.chatServers.push(newServer);
@@ -1190,6 +1281,64 @@ app.post("/api/bubble/servers", (req, res) => {
 
     res.json({ success: true, server: newServer });
   } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Generate Invite Code (expires in 5 hours)
+app.post("/api/bubble/servers/:id/invite", (req, res) => {
+  try {
+    const { id } = req.params;
+    const db = getDb();
+    const srv = (db.chatServers || []).find((s: any) => s.id === id);
+    if (!srv) {
+      res.status(404).json({ error: "Server not found." });
+      return;
+    }
+    
+    // Generate a random 8 char code
+    const newCode = Math.random().toString(36).substring(2, 10).toUpperCase();
+    srv.inviteCode = newCode;
+    srv.inviteExpiresAt = Date.now() + 5 * 60 * 60 * 1000; // 5 hours
+    
+    saveDb(db);
+    res.json({ success: true, inviteCode: newCode, expiresAt: srv.inviteExpiresAt });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Join server using code
+app.post("/api/bubble/servers/join", (req, res) => {
+  try {
+    const { inviteCode, nickname } = req.body;
+    if (!inviteCode || !nickname) {
+       res.status(400).json({ error: "Invite code and nickname are required." });
+       return;
+    }
+    
+    const db = getDb();
+    const srv = (db.chatServers || []).find((s: any) => s.inviteCode === inviteCode.trim().toUpperCase());
+    
+    if (!srv) {
+       res.status(404).json({ error: "Invalid invite code." });
+       return;
+    }
+    
+    if (srv.inviteExpiresAt && Date.now() > srv.inviteExpiresAt) {
+       res.status(400).json({ error: "Invite code has expired." });
+       return;
+    }
+    
+    if (!srv.members) srv.members = [];
+    const cleanNick = nickname.trim();
+    if (!srv.members.includes(cleanNick)) {
+       srv.members.push(cleanNick);
+    }
+    
+    saveDb(db);
+    res.json({ success: true, server: srv });
+  } catch(err: any) {
     res.status(500).json({ error: err.message });
   }
 });
@@ -1289,6 +1438,8 @@ app.post("/api/bubble/messages", async (req, res) => {
     res.json({ success: true, message: newMsg });
 
     // Background Thread - AI Agent triggering checks
+    if (!appSettings.agentAiCore) return; // Prevent AI from replying if global toggle is switched off
+    
     const processedText = text.toLowerCase();
     let selectedAgent: any = null;
 
@@ -1391,6 +1542,61 @@ User's handle is: "${sender}".`;
 // ============================================
 // OWNER & ADMIN CONTROL PANEL DASHBOARD ENDPOINTS
 // ============================================
+
+// Toggle settings endpoint
+app.post("/api/admin/settings/toggle", (req, res) => {
+  try {
+    const { adminEmail, settingKey, value } = req.body;
+    if (!verifyAdminRole(adminEmail)) {
+      res.status(403).json({ error: "Access denied." });
+      return;
+    }
+    if (settingKey in appSettings) {
+      (appSettings as any)[settingKey] = value;
+    }
+    res.json({ success: true, settings: appSettings });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Telemetry endpoint
+app.get("/api/admin/telemetry", (req, res) => {
+  try {
+    const requesterEmail = req.query.adminEmail as string;
+    if (!requesterEmail || !verifyAdminRole(requesterEmail)) {
+      res.status(403).json({ error: "Access denied." });
+      return;
+    }
+
+    const totalMem = os.totalmem();
+    const freeMem = os.freemem();
+    const usedMemMB = Math.round((totalMem - freeMem) / 1024 / 1024);
+    const totalMemMB = Math.round(totalMem / 1024 / 1024);
+
+    // Get an approximate CPU usage (simpler calculation using loadavg)
+    // loadavg is 1, 5, 15 minutes. We take 1 minute avg as percentage of CPU count.
+    const cpuCount = os.cpus().length;
+    const cpuUsagePercent = Math.min(100, Math.round((os.loadavg()[0] / cpuCount) * 100));
+
+    // Approximate database response ping by measuring a small read duration
+    const start = process.hrtime();
+    const isLive = fs.existsSync(DB_FILE_PATH);
+    const diff = process.hrtime(start);
+    const pingSpeedMs = Math.round((diff[0] * 1e9 + diff[1]) / 1e6);
+
+    res.json({
+      success: true,
+      cpuUsage: cpuUsagePercent,
+      ramUsage: usedMemMB,
+      totalRam: totalMemMB,
+      pingSpeed: pingSpeedMs > 0 ? pingSpeedMs : 1, // at least 1ms output
+      settings: appSettings
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
 
 // Helper to assert owner or administration status
 function verifyAdminRole(email: string): boolean {

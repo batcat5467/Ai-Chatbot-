@@ -111,25 +111,39 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
     fetchDashboardData();
   }, [adminEmail]);
 
-  // Telemetry loop simulation
-  useEffect(() => {
-    const timer = setInterval(() => {
-      setCpuUsage(prev => {
-        const delta = Math.floor(Math.random() * 9) - 4;
-        return Math.max(12, Math.min(84, prev + delta));
-      });
-      setRamUsage(prev => {
-        const delta = Math.floor(Math.random() * 5) - 2;
-        return Math.max(105, Math.min(210, prev + delta));
-      });
-      setPingSpeed(prev => {
-        const delta = Math.floor(Math.random() * 7) - 3;
-        return Math.max(18, Math.min(95, prev + delta));
-      });
-    }, 4000);
+  // App configurations
+  const [appSettings, setAppSettings] = useState({
+    maintenanceMode: false,
+    allowSignups: true,
+    agentAiCore: true,
+    debugTracing: false
+  });
+  const [totalRam, setTotalRam] = useState(512);
 
+  // Telemetry real fetch loop
+  useEffect(() => {
+    const fetchTelemetry = async () => {
+      try {
+        const res = await fetch(`/api/admin/telemetry?adminEmail=${encodeURIComponent(adminEmail)}`);
+        if (res.ok) {
+          const data = await res.json();
+          setCpuUsage(data.cpuUsage || 0);
+          setRamUsage(data.ramUsage || 0);
+          setPingSpeed(data.pingSpeed || 1);
+          setTotalRam(data.totalRam || 512);
+          if (data.settings) {
+             setAppSettings(data.settings);
+          }
+        }
+      } catch (err) {
+        // fail silently on telemetry
+      }
+    };
+    
+    fetchTelemetry();
+    const timer = setInterval(fetchTelemetry, 3000);
     return () => clearInterval(timer);
-  }, []);
+  }, [adminEmail]);
 
   // Command Action execution wrapper
   const handleAction = async (endpoint: string, payload: any, successFeedback: string) => {
@@ -262,6 +276,24 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
     if (inspectedUser?.email === targetUserEmail) {
       setInspectedUser(null);
       setActiveInspectedSession(null);
+    }
+  };
+
+  // Toggle app setting
+  const handleToggleSetting = async (settingKey: string, currentValue: boolean) => {
+    try {
+      setErrorMessage(null);
+      const res = await fetch("/api/admin/settings/toggle", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ adminEmail, settingKey, value: !currentValue })
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Failed updating server setting.");
+      setAppSettings(data.settings);
+      setSuccessMessage(`System variable ${settingKey} updated.`);
+    } catch (err: any) {
+      setErrorMessage(err.message);
     }
   };
 
@@ -520,6 +552,69 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
               {/* Maintenance guidelines warning note */}
               <div className="bg-amber-500/5 border border-amber-500/15 p-2.5 rounded text-[9.5px] font-mono text-amber-400 leading-relaxed">
                 <span className="font-extrabold uppercase">Notice:</span> Operations executed in this administrative scope apply directly into the shared file systems without temporary buffer storage. Use containing guidelines with authority control.
+              </div>
+            </div>
+
+            {/* Application Configuration Feature Toggles */}
+            <div className="lg:col-span-3 bg-[#050811] border border-slate-800/80 rounded-xl p-4 flex flex-col justify-between space-y-4">
+              <div>
+                <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5 mb-1">
+                  <CheckSquare size={14} className="text-[#00cfc0]" />
+                  Global Workspace Settings
+                </h3>
+                <p className="text-[10px] text-slate-500 font-mono">
+                  Modify live parameters and user-accessible interfaces at runtime.
+                </p>
+              </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-200 uppercase">Maintenance Mode</span>
+                    <span className="text-[9px] text-slate-500">Lock out all users</span>
+                  </div>
+                  <div 
+                    onClick={() => handleToggleSetting("maintenanceMode", appSettings.maintenanceMode)}
+                    className={`h-4 w-8 rounded-full border relative cursor-pointer transition-colors ${appSettings.maintenanceMode ? "bg-rose-950 border-rose-900" : "bg-slate-950 border-slate-700"}`}
+                  >
+                    <span className={`absolute top-0 bottom-0 w-4 rounded-full border transition-all ${appSettings.maintenanceMode ? "right-0 bg-[#00cfc0] border-emerald-400" : "left-0 bg-slate-500 border-slate-400"}`}></span>
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-200 uppercase">Allow Sign-ups</span>
+                    <span className="text-[9px] text-slate-500">New OTP/Auth accounts</span>
+                  </div>
+                  <div 
+                    onClick={() => handleToggleSetting("allowSignups", appSettings.allowSignups)}
+                    className={`h-4 w-8 rounded-full border relative cursor-pointer transition-colors ${appSettings.allowSignups ? "bg-emerald-950 border-emerald-900" : "bg-slate-950 border-slate-700"}`}
+                  >
+                    <span className={`absolute top-0 bottom-0 w-4 rounded-full border transition-all ${appSettings.allowSignups ? "right-0 bg-[#00cfc0] border-emerald-400" : "left-0 bg-slate-500 border-slate-400"}`}></span>
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-200 uppercase">Agent AI Core</span>
+                    <span className="text-[9px] text-slate-500">Global AI integration</span>
+                  </div>
+                  <div 
+                    onClick={() => handleToggleSetting("agentAiCore", appSettings.agentAiCore)}
+                    className={`h-4 w-8 rounded-full border relative cursor-pointer transition-colors ${appSettings.agentAiCore ? "bg-emerald-950 border-emerald-900" : "bg-slate-950 border-slate-700"}`}
+                  >
+                    <span className={`absolute top-0 bottom-0 w-4 rounded-full border transition-all ${appSettings.agentAiCore ? "right-0 bg-[#00cfc0] border-emerald-400" : "left-0 bg-slate-500 border-slate-400"}`}></span>
+                  </div>
+                </div>
+                <div className="bg-slate-900 border border-slate-800 p-3 rounded-lg flex items-center justify-between">
+                  <div className="flex flex-col">
+                    <span className="text-[10px] font-bold text-slate-200 uppercase">Debug Tracing</span>
+                    <span className="text-[9px] text-slate-500">Capture verbose events</span>
+                  </div>
+                  <div 
+                    onClick={() => handleToggleSetting("debugTracing", appSettings.debugTracing)}
+                    className={`h-4 w-8 rounded-full border relative cursor-pointer transition-colors ${appSettings.debugTracing ? "bg-amber-950 border-amber-900" : "bg-slate-950 border-slate-700"}`}
+                  >
+                    <span className={`absolute top-0 bottom-0 w-4 rounded-full border transition-all ${appSettings.debugTracing ? "right-0 bg-[#00cfc0] border-emerald-400" : "left-0 bg-slate-500 border-slate-400"}`}></span>
+                  </div>
+                </div>
               </div>
             </div>
 
