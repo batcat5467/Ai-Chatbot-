@@ -47,6 +47,7 @@ import { ChatMessage, ChatSession, ModelOption } from "./types";
 import { CodeBlock } from "./components/CodeBlock";
 import AuthModal from "./components/AuthModal";
 import OwnerDashboard from "./components/OwnerDashboard";
+import ChatBubble from "./components/ChatBubble";
 
 export default function App() {
   // Custom User Session Authentication and Administrative Dashboard Controls
@@ -118,8 +119,8 @@ export default function App() {
   
   // Custom sidebar layout toggles matching the reference screenshot
   const [isLeftColOpen, setIsLeftColOpen] = useState(true);
-  const [isMiddleColOpen, setIsMiddleColOpen] = useState(true);
-  const [isRightColOpen, setIsRightColOpen] = useState(true);
+  const [isMiddleColOpen, setIsMiddleColOpen] = useState(false);
+  const [isRightColOpen, setIsRightColOpen] = useState(false);
   const [openedSandboxFile, setOpenedSandboxFile] = useState<any | null>(null);
   const [sandboxFileEditedContent, setSandboxFileEditedContent] = useState("");
   const [isExtractingArchive, setIsExtractingArchive] = useState(false);
@@ -781,6 +782,9 @@ export default function App() {
       if (name === "search") {
         const queryMatch = argsRaw.match(/query:\s*"([\s\S]*?)"/) || argsRaw.match(/query:\s*(.*?)$/);
         args.query = queryMatch ? queryMatch[1] : argsRaw.replace(/^query:\s*/, "").replace(/^"/, "").replace(/"$/, "").trim();
+      } else if (name === "browse") {
+        const urlMatch = argsRaw.match(/url:\s*"([\s\S]*?)"/) || argsRaw.match(/url:\s*(.*?)$/);
+        args.url = urlMatch ? urlMatch[1] : argsRaw.replace(/^url:\s*/, "").replace(/^"/, "").replace(/"$/, "").trim();
       } else if (name === "readFile") {
         const fnMatch = argsRaw.match(/filename:\s*"([\s\S]*?)"/) || argsRaw.match(/filename:\s*(.*?)$/);
         args.filename = fnMatch ? fnMatch[1] : argsRaw.replace(/^filename:\s*/, "").replace(/^"/, "").replace(/"$/, "").trim();
@@ -939,10 +943,11 @@ export default function App() {
 
           // Inject custom tool instruction guidelines dynamically
           const systemInstruction = (activeSession.systemInstruction || "") + `\n\n[AGENT TERMINAL SYSTEMS PROTOCOLS: MONOSHELL WORKSPACE ENABLED]
-You can run automated tasks here. If you need external search, workspace files, or durable state, write EXACTLY ONE action below. Do not add explanations when calling tools.
+You can run automated tasks here. If you need external search, direct web crawling/browsing, workspace files, or durable state, write EXACTLY ONE action below. Do not add explanations when calling tools.
 
 Supported tool patterns:
 - Search Google/DuckDuckGo bypass engine: [ACTION: search, query: "search keyword text"]
+- Browse/read direct external web page content: [ACTION: browse, url: "https://example.com/some-article"]
 - Read real sandbox workspace files: [ACTION: readFile, filename: "App.tsx"]
 - Write real sandbox workspace files: [ACTION: writeFile, filename: "your_file.txt", content: "data content here"]
 - Edit existing sandbox workspace files: [ACTION: editFile, filename: "App.tsx", search: "original substring", replace: "modified replacement"]
@@ -1023,6 +1028,15 @@ If you call an action, the pipeline will intercept and execute it automatically.
                   }
                 } else {
                   resultPayload = `Bypass server search error: HTTP Code ${searchRes.status}`;
+                }
+              } else if (toolCall.name === "browse") {
+                const urlVal = toolCall.args.url || "";
+                const browseRes = await fetch(`/api/browse?url=${encodeURIComponent(urlVal)}`);
+                if (browseRes.ok) {
+                  const browseData = await browseRes.json();
+                  resultPayload = `[LIVE PAGE READ SUCCESSFUL] URL: ${browseData.url}\nTitle: ${browseData.title}\n\nContents:\n${browseData.content}`;
+                } else {
+                  resultPayload = `Page Reader Crawl Error: HTTP Code ${browseRes.status}`;
                 }
               } else if (toolCall.name === "readFile") {
                 const fn = toolCall.args.filename || "";
@@ -1886,18 +1900,44 @@ If you call an action, the pipeline will intercept and execute it automatically.
               </button>
             )}
 
-            <button
-              onClick={() => setIsRightColOpen(!isRightColOpen)}
-              className={`flex h-7 px-2.5 items-center justify-center gap-1.5 rounded border text-[10px] font-bold tracking-wider cursor-pointer transition-all uppercase select-none
-                ${isRightColOpen 
-                  ? "border-[#00cfc0] text-[#00cfc0] bg-[#00cfc0]/5 hover:bg-[#00cfc0]/15" 
-                  : "border-slate-800 text-slate-400 bg-transparent hover:text-slate-200"}`}
-              title="Toggle Right Sandbox Workspace Panel"
-            >
-              <Terminal size={11} />
-              <span className="hidden sm:inline">Workspace Sandbox</span>
-              <span className="inline sm:hidden">Sandbox</span>
-            </button>
+            {/* Interactive Cyber Sidebar Panels Controller Toggles */}
+            <div className="flex items-center gap-1 bg-slate-950/60 border border-slate-800/80 p-0.5 rounded-lg select-none">
+              <button
+                onClick={() => setIsLeftColOpen(!isLeftColOpen)}
+                className={`flex h-7 px-2.5 items-center justify-center gap-1 rounded text-[10px] font-bold tracking-wider cursor-pointer transition-all uppercase select-none
+                  ${isLeftColOpen 
+                    ? "bg-[#00cfc0]/15 text-[#00cfc0] border border-[#00cfc0]/35 shadow-[0_0_8px_rgba(0,207,192,0.15)]" 
+                    : "border border-transparent text-slate-500 hover:text-slate-300"}`}
+                title="Toggle sessions navigation list panel"
+              >
+                <MessageSquare size={11} />
+                <span className="hidden sm:inline">Sessions</span>
+              </button>
+              
+              <button
+                onClick={() => setIsMiddleColOpen(!isMiddleColOpen)}
+                className={`flex h-7 px-2.5 items-center justify-center gap-1 rounded text-[10px] font-bold tracking-wider cursor-pointer transition-all uppercase select-none
+                  ${isMiddleColOpen 
+                    ? "bg-[#00cfc0]/15 text-[#00cfc0] border border-[#00cfc0]/35 shadow-[0_0_8px_rgba(0,207,192,0.15)]" 
+                    : "border border-transparent text-slate-500 hover:text-slate-300"}`}
+                title="Toggle diagnostics diagnostics and files subpanel"
+              >
+                <Activity size={11} />
+                <span className="hidden sm:inline">Diagnostics</span>
+              </button>
+              
+              <button
+                onClick={() => setIsRightColOpen(!isRightColOpen)}
+                className={`flex h-7 px-2.5 items-center justify-center gap-1 rounded text-[10px] font-bold tracking-wider cursor-pointer transition-all uppercase select-none
+                  ${isRightColOpen 
+                    ? "bg-[#00cfc0]/15 text-[#00cfc0] border border-[#00cfc0]/35 shadow-[0_0_8px_rgba(0,207,192,0.15)]" 
+                    : "border border-transparent text-slate-500 hover:text-slate-300"}`}
+                title="Toggle right auxiliary sandbox cabinets"
+              >
+                <Terminal size={11} />
+                <span className="hidden sm:inline">Sandbox</span>
+              </button>
+            </div>
             <span className="flex items-center gap-1 bg-[#10b981]/10 px-2.5 py-1 rounded border border-[#10b981]/20 text-[10px] text-emerald-400 font-bold uppercase tracking-widest">
               <span className="h-1.5 w-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
               ONLINE
@@ -2874,6 +2914,9 @@ If you call an action, the pipeline will intercept and execute it automatically.
           onClose={() => setDashboardOpen(false)}
         />
       )}
+
+      {/* Real-time online multi-user chat bubble network */}
+      <ChatBubble loggedUser={loggedUser} />
 
     </div>
   );

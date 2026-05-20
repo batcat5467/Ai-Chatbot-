@@ -448,6 +448,68 @@ app.get("/api/search", async (req, res) => {
   }
 });
 
+// 1.5 GET /api/browse - Live Web Page Reader & Scraper
+app.get("/api/browse", async (req, res) => {
+  try {
+    let targetUrl = (req.query.url as string || "").trim();
+
+    if (!targetUrl) {
+      res.status(400).json({ error: "Missing Target URL" });
+      return;
+    }
+
+    if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+      targetUrl = "https://" + targetUrl;
+    }
+
+    console.log(`[AGENT BROWSE] Live scraping page contents for URL: "${targetUrl}"`);
+
+    const browseRes = await fetch(targetUrl, {
+      headers: {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/115.0.0.0 Safari/537.36",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5"
+      }
+    });
+
+    if (!browseRes.ok) {
+      throw new Error(`Failed to browse url. Status: ${browseRes.status}`);
+    }
+
+    const html = await browseRes.text();
+    const $ = cheerio.load(html);
+
+    // Remove noisy elements to clean up read payload
+    $("script, style, iframe, noscript, svg, footer, header, nav").remove();
+
+    const pageTitle = $("title").text().trim() || "Untitled Web Page";
+    
+    // Extract primary textual parts
+    const textBlocks: string[] = [];
+    
+    $("h1, h2, h3, p, li").each((_, elem) => {
+      const txt = $(elem).text().trim();
+      // Remove excessive white space and empty lines
+      const cleanTxt = txt.replace(/\s+/g, ' ');
+      if (cleanTxt.length > 15) {
+        textBlocks.push(cleanTxt);
+      }
+    });
+
+    const bodyContent = textBlocks.slice(0, 45).join("\n\n");
+    const summaryText = bodyContent.substring(0, 8000);
+
+    res.json({
+      url: targetUrl,
+      title: pageTitle,
+      content: summaryText || "No readable content blocks found on the page."
+    });
+  } catch (error: any) {
+    console.error("[AGENT BROWSE ERROR]:", error.message);
+    res.status(500).json({ error: `Direct page crawler error: ${error.message}` });
+  }
+});
+
 // 2. GET /api/agent/files - Retrieve workspace directory indices
 app.get("/api/agent/files", (req, res) => {
   res.json({ files: Object.entries(agentVirtualFiles).map(([name, f]) => ({ name, ...f })) });
@@ -651,6 +713,101 @@ app.post("/api/agent/files/delete", (req, res) => {
 
 const DB_FILE_PATH = path.join(process.cwd(), "nexus_db.json");
 
+// ============================================================
+// CHAT BUBBLE & MULTIPLAYER DISCORD-LIKE WORKSPACE INTERFACES & DEFAULTS
+// ============================================================
+
+interface ChatChannel {
+  id: string;
+  name: string;
+  description: string;
+}
+
+interface ChatServer {
+  id: string;
+  name: string;
+  icon?: string;
+  channels: ChatChannel[];
+}
+
+interface ChatMessage {
+  id: string;
+  serverId: string;
+  channelId: string;
+  sender: string;
+  text: string;
+  timestamp: string;
+  isAgent?: boolean;
+}
+
+interface ChatFriend {
+  id: string;
+  name: string;
+  status: "online" | "idle" | "offline";
+  isAgent?: boolean;
+  role?: string;
+  avatarColor?: string;
+}
+
+const defaultChatServers: ChatServer[] = [
+  {
+    id: "server-1",
+    name: "Nexus Portal Core",
+    icon: "NP",
+    channels: [
+      { id: "chan-11", name: "announcements", description: "Official system and cyber gateway updates." },
+      { id: "chan-12", name: "general-chat", description: "The community lounge for portal explorers." },
+      { id: "chan-13", name: "terminal-protocols", description: "Logs, hacking operations, and code protocols." }
+    ]
+  },
+  {
+    id: "server-2",
+    name: "AI Agents Guild",
+    icon: "AI",
+    channels: [
+      { id: "chan-21", name: "general-intellect", description: "Collaborate on next-gen models and LLMs." },
+      { id: "chan-22", name: "prompt-engineers", description: "Fine-tune and perfect system directives." }
+    ]
+  }
+];
+
+const defaultChatFriends: ChatFriend[] = [
+  { id: "friend-bot-1", name: "Nexus Bot", status: "online", isAgent: true, role: "System AI Assistance Agent", avatarColor: "#00cfc0" },
+  { id: "friend-bot-2", name: "CyberCoder", status: "online", isAgent: true, role: "Senior TypeScript Architect", avatarColor: "#a855f7" },
+  { id: "friend-bot-3", name: "PixelArtisan", status: "idle", isAgent: true, role: "Lead UI & Motion Designer", avatarColor: "#f43f5e" },
+  { id: "friend-bot-4", name: "NeuroScribe", status: "offline", isAgent: true, role: "Creative Content Director", avatarColor: "#eab308" }
+];
+
+const defaultChatMessages: ChatMessage[] = [
+  {
+    id: "msg-1",
+    serverId: "server-1",
+    channelId: "chan-11",
+    sender: "Nexus Bot",
+    text: "Welcome to the Nexus Portal Online Network! Access sub-channels, create servers, add custom members, and ping intelligent agents in real-time.",
+    timestamp: new Date().toISOString(),
+    isAgent: true
+  },
+  {
+    id: "msg-2",
+    serverId: "server-1",
+    channelId: "chan-12",
+    sender: "CyberCoder",
+    text: "Hey everyone! Just checking out the new live floating chat widget. This feels exactly like a micro Discord built right into our terminal! 💻⚡",
+    timestamp: new Date().toISOString(),
+    isAgent: true
+  },
+  {
+    id: "msg-3",
+    serverId: "server-1",
+    channelId: "chan-12",
+    sender: "PixelArtisan",
+    text: "Agreed, the animations here are butter smooth. The cyber styling blends beautifully.",
+    timestamp: new Date().toISOString(),
+    isAgent: true
+  }
+];
+
 interface UserRecord {
   email: string;
   password?: string;
@@ -673,6 +830,9 @@ interface SystemLog {
 interface NexusDatabase {
   users: UserRecord[];
   systemLogs: SystemLog[];
+  chatServers?: ChatServer[];
+  chatMessages?: ChatMessage[];
+  chatFriends?: ChatFriend[];
 }
 
 // Initial default database state
@@ -696,7 +856,10 @@ const defaultDbState: NexusDatabase = {
       level: "success",
       event: "Nexus Portal persistent database initialized. Pre-registered Owner Account: y48455577@gmail.com"
     }
-  ]
+  ],
+  chatServers: defaultChatServers,
+  chatFriends: defaultChatFriends,
+  chatMessages: defaultChatMessages
 };
 
 // Synchronous safe database reader
@@ -707,7 +870,26 @@ function getDb(): NexusDatabase {
       return defaultDbState;
     }
     const raw = fs.readFileSync(DB_FILE_PATH, "utf8");
-    return JSON.parse(raw);
+    const parsed = JSON.parse(raw);
+    
+    // Polyfill fields if they don't exist in an older database format
+    let needsSave = false;
+    if (!parsed.chatServers) {
+      parsed.chatServers = defaultChatServers;
+      needsSave = true;
+    }
+    if (!parsed.chatMessages) {
+      parsed.chatMessages = defaultChatMessages;
+      needsSave = true;
+    }
+    if (!parsed.chatFriends) {
+      parsed.chatFriends = defaultChatFriends;
+      needsSave = true;
+    }
+    if (needsSave) {
+      fs.writeFileSync(DB_FILE_PATH, JSON.stringify(parsed, null, 2), "utf8");
+    }
+    return parsed;
   } catch (err: any) {
     console.error("[DB ERROR] Failed reading/writing database file, using memory fallback:", err.message);
     return defaultDbState;
@@ -959,6 +1141,250 @@ app.post("/api/user/sync-history", (req, res) => {
     res.json({ success: true, count: history.length });
   } catch (err: any) {
     res.status(500).json({ error: `Sync synchronization failure: ${err.message}` });
+  }
+});
+
+// ============================================================
+// REAL-TIME MULTIPLAYER CHAT BUBBLE ENDPOINTS
+// ============================================================
+
+// Get entire live bubble state (servers list, all relevant channel messages, and friends list)
+app.get("/api/bubble/state", (req, res) => {
+  try {
+    const db = getDb();
+    res.json({
+      servers: db.chatServers || [],
+      messages: db.chatMessages || [],
+      friends: db.chatFriends || []
+    });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create new Discord-like Server
+app.post("/api/bubble/servers", (req, res) => {
+  try {
+    const { name, icon } = req.body;
+    if (!name) {
+      res.status(400).json({ error: "Server name is required." });
+      return;
+    }
+
+    const db = getDb();
+    if (!db.chatServers) db.chatServers = [];
+
+    const serverId = "srv-" + Date.now();
+    const newServer: ChatServer = {
+      id: serverId,
+      name,
+      icon: icon || name.split(" ").map((w: string) => w[0]).join("").substring(0, 3).toUpperCase(),
+      channels: [
+        { id: `chan-${Date.now()}-1`, name: "general", description: `Welcome to the main channel of ${name}!` },
+        { id: `chan-${Date.now()}-2`, name: "lounge", description: "Grab a warm beverage and talk about code." }
+      ]
+    };
+
+    db.chatServers.push(newServer);
+    saveDb(db);
+
+    res.json({ success: true, server: newServer });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Create new Channel inside a Server
+app.post("/api/bubble/channels", (req, res) => {
+  try {
+    const { serverId, name, description } = req.body;
+    if (!serverId || !name) {
+      res.status(400).json({ error: "Server ID and Channel name are required." });
+      return;
+    }
+
+    const db = getDb();
+    if (!db.chatServers) db.chatServers = [];
+
+    const srv = db.chatServers.find(s => s.id === serverId);
+    if (!srv) {
+      res.status(404).json({ error: "Target server not found." });
+      return;
+    }
+
+    const cleanChanName = name.toLowerCase().replace(/\s+/g, "-");
+    const newChan: ChatChannel = {
+      id: `chan-${Date.now()}`,
+      name: cleanChanName,
+      description: description || "Interactive chat channel."
+    };
+
+    srv.channels.push(newChan);
+    saveDb(db);
+
+    res.json({ success: true, channel: newChan });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Add a Friend
+app.post("/api/bubble/friends", (req, res) => {
+  try {
+    const { name, isAgent, role, avatarColor } = req.body;
+    if (!name) {
+      res.status(400).json({ error: "Friend username/name is required." });
+      return;
+    }
+
+    const db = getDb();
+    if (!db.chatFriends) db.chatFriends = [];
+
+    const newFriend: ChatFriend = {
+      id: "friend-" + Date.now(),
+      name,
+      status: "online",
+      isAgent: !!isAgent,
+      role: role || (isAgent ? "Autonomous System AI Persona" : "External Developer Cadet"),
+      avatarColor: avatarColor || "#" + Math.floor(Math.random()*16777215).toString(16)
+    };
+
+    db.chatFriends.push(newFriend);
+    saveDb(db);
+
+    res.json({ success: true, friend: newFriend });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Send Chat Message
+app.post("/api/bubble/messages", async (req, res) => {
+  try {
+    const { serverId, channelId, sender, text, isAgent } = req.body;
+    if (!channelId || !sender || !text) {
+      res.status(400).json({ error: "Missing channelId, sender, or text." });
+      return;
+    }
+
+    const db = getDb();
+    
+    // Fallback if not initialized
+    if (!db.chatMessages) db.chatMessages = [];
+    if (!db.chatFriends) db.chatFriends = [];
+
+    const newMsg: ChatMessage = {
+      id: "msg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+      serverId: serverId || "server-1",
+      channelId,
+      sender,
+      text,
+      timestamp: new Date().toISOString(),
+      isAgent: !!isAgent
+    };
+
+    db.chatMessages.push(newMsg);
+    saveDb(db);
+
+    res.json({ success: true, message: newMsg });
+
+    // Background Thread - AI Agent triggering checks
+    const processedText = text.toLowerCase();
+    let selectedAgent: any = null;
+
+    if (serverId === "dm") {
+      // Direct message recipientId is channelId
+      const targetFriend = db.chatFriends.find(f => f.id === channelId);
+      if (targetFriend && targetFriend.isAgent) {
+        selectedAgent = targetFriend;
+      }
+    } else {
+      // Channels: Check for name mention (e.g., '@CyberCoder', 'nexus bot')
+      const mentionMap = [
+        { key: "nexus bot", id: "friend-bot-1" },
+        { key: "cybercoder", id: "friend-bot-2" },
+        { key: "pixelartisan", id: "friend-bot-3" },
+        { key: "neuroscribe", id: "friend-bot-4" }
+      ];
+      
+      const foundMention = mentionMap.find(m => processedText.includes(m.key) || processedText.includes("@" + m.key.replace(" ", "")));
+      if (foundMention) {
+        selectedAgent = db.chatFriends.find(f => f.id === foundMention.id);
+      } else if (Math.random() < 0.15) {
+        // 15% chance for a random active chat person to respond to increase liveliness!
+        const onlineAgents = db.chatFriends.filter(f => f.isAgent && f.status !== "offline");
+        if (onlineAgents.length > 0) {
+          selectedAgent = onlineAgents[Math.floor(Math.random() * onlineAgents.length)];
+        }
+      }
+    }
+
+    if (selectedAgent) {
+      setTimeout(async () => {
+        try {
+          const freshDb = getDb();
+          const channelMessages = (freshDb.chatMessages || []).filter(
+            m => m.serverId === serverId && m.channelId === channelId
+          );
+          
+          // Grab current chat context
+          const lastMessages = channelMessages.slice(-12);
+          const promptContext = lastMessages.map(m => `${m.sender}: ${m.text}`).join("\n");
+          
+          const agentPersonaPrompt = selectedAgent.role || "Autonomous Digital Assistant";
+          let personaInstruction = `You are playing the role of "${selectedAgent.name}" in a cyber-security terminal Discord-styled chat.
+Designation role: ${agentPersonaPrompt}.
+Reply to the recent channel context conversation in a concise, expressive, and tech-friendly voice. Avoid long essays. Keep paragraphs short (1-2 sentences), using casual chat layout formatting, occasional developer shorthand or emoticons.
+User's handle is: "${sender}".`;
+
+          if (selectedAgent.id === "friend-friend-active-1") {
+            personaInstruction += `\nPersonality: Casual online buddy, highly interested in chat tech, chill and friendly.`;
+          } else if (selectedAgent.id === "friend-bot-2") {
+            personaInstruction += `\nPersonality: Passionate typescript-head, terminal enthusiast, likes referring to code snippets or bugs. Extremely enthusiastic and helpful.`;
+          } else if (selectedAgent.id === "friend-bot-3") {
+            personaInstruction += `\nPersonality: UI wizard who loves neon glow, layout aesthetics, responsive buttons, and padding. Calm, creative, and style-conscious.`;
+          } else if (selectedAgent.id === "friend-bot-4") {
+            personaInstruction += `\nPersonality: Creative writer persona, witty, mildly sarcastic helper bot. Likes using word puns or playful logic puzzles.`;
+          }
+
+          const gemini = getGeminiClient();
+          const response = await gemini.models.generateContent({
+            model: "gemini-3.5-flash",
+            contents: `The following is the active chat transcript:\n${promptContext}\n\nGenerate the next chat response as the character "${selectedAgent.name}":`,
+            config: {
+              systemInstruction: personaInstruction,
+              maxOutputTokens: 220,
+              temperature: 0.85
+            }
+          });
+
+          const replyText = response.text || "Command response timed out, routing payload protocols.";
+
+          const botDb = getDb();
+          if (!botDb.chatMessages) botDb.chatMessages = [];
+
+          const botMsg: ChatMessage = {
+            id: "msg-" + Date.now() + "-" + Math.random().toString(36).substr(2, 4),
+            serverId: serverId || "server-1",
+            channelId,
+            sender: selectedAgent.name,
+            text: replyText.trim(),
+            timestamp: new Date().toISOString(),
+            isAgent: true
+          };
+
+          botDb.chatMessages.push(botMsg);
+          saveDb(botDb);
+          console.log(`[CHAT BUBBLE BOT] Agent "${selectedAgent.name}" successfully replied in channel "${channelId}".`);
+        } catch (botErr: any) {
+          console.error("[CHAT BUBBLE BOT EXCEPTION]:", botErr.message);
+        }
+      }, 1200);
+    }
+
+  } catch (err: any) {
+    console.error("[POST MESSAGE ERROR]:", err.message);
+    res.status(500).json({ error: err.message });
   }
 });
 
