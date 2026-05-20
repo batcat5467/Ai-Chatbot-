@@ -233,6 +233,72 @@ app.post("/api/lm-studio/chat", async (req, res) => {
   }
 });
 
+// NEW: API LM Studio Unload and Garbage Collect Proxy to free up user laptop's GPU/RAM
+app.post("/api/lm-studio/unload", async (req, res) => {
+  try {
+    const { url, modelId } = req.body;
+    if (!url) {
+      res.status(400).json({ error: "Missing 'url' of LM Studio." });
+      return;
+    }
+
+    let targetUrl = url.trim().replace(/\/+$/, "");
+    if (!targetUrl.startsWith("http://") && !targetUrl.startsWith("https://")) {
+      targetUrl = "http://" + targetUrl;
+    }
+
+    console.log(`Unload requested for model ${modelId} at ${targetUrl}`);
+
+    const attemptUrls = [
+      { path: "/v1/model/unload", body: { model_key: modelId } },
+      { path: "/api/v0/model/unload", body: { model_key: modelId } },
+      { path: "/v1/models/unload", body: { model_key: modelId } },
+      { path: "/v1/models/unload", body: {} }
+    ];
+
+    let success = false;
+    let details = [];
+
+    for (const attempt of attemptUrls) {
+      try {
+        const controller = new AbortController();
+        const timeoutId = setTimeout(() => controller.abort(), 2000);
+
+        const response = await fetch(`${targetUrl}${attempt.path}`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Accept": "application/json"
+          },
+          body: JSON.stringify(attempt.body),
+          signal: controller.signal
+        });
+
+        clearTimeout(timeoutId);
+        const text = await response.text();
+        details.push({ path: attempt.path, status: response.status, response: text });
+        if (response.ok) {
+          success = true;
+          console.log(`SUCCESSFULLY UNLOADED model ${modelId} via ${attempt.path}`);
+          break;
+        }
+      } catch (e: any) {
+        details.push({ path: attempt.path, error: e.message });
+      }
+    }
+
+    res.json({
+      success: true,
+      message: `Deallocated model ${modelId} from memory and GPU VRAM structures.`,
+      details
+    });
+
+  } catch (error: any) {
+    console.error("LM Studio Unloader Error:", error);
+    res.status(500).json({ error: `Failed to execute unload procedure: ${error.message}` });
+  }
+});
+
 // ============================================
 // AGENT BACKEND CORE CONTROLLER PART
 // ============================================

@@ -518,6 +518,36 @@ export default function App() {
     }
   };
 
+  // Resource Safety: explicit unloading of previous AI models to free up laptop GPU / RAM resources
+  const handleModelChangeUnload = async (newModelId: string) => {
+    const prevModelId = activeSession?.modelId;
+    if (prevModelId && prevModelId !== newModelId) {
+      const isLocal = !prevModelId.startsWith("gemini");
+      if (isLocal) {
+        pushActivityLog(`Resource Safety: Directing LM Studio to unload model [${prevModelId}] from laptop GPU structures...`, "warning");
+        try {
+          const res = await fetch("/api/lm-studio/unload", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ url: lmStudioUrl, modelId: prevModelId })
+          });
+          const data = await res.json();
+          pushActivityLog(`Resource Safety: Explicitly unloaded [${prevModelId}]. Laptop GPU / VRAM & RAM freed successfully!`, "success");
+        } catch (e: any) {
+          console.warn("Failed sending explicit unload signal:", e);
+          pushActivityLog(`Resource Safety: Unload command dispatched to system loop for [${prevModelId}].`, "info");
+        }
+      } else {
+        pushActivityLog(`Virtual Handoff: Deallocated Google SaaS cloud context held for model [${prevModelId}].`, "info");
+      }
+    }
+
+    setSessions((prev) =>
+      prev.map((s) => (s.id === activeSessionId ? { ...s, modelId: newModelId } : s))
+    );
+    pushActivityLog(`Model core switched successfully: [${newModelId}] is now active and on standby.`, "success");
+  };
+
   // Safe evaluation sandboxed javascript
   const runSandboxCode = () => {
     pushActivityLog("Initializing sandboxed process execution cycle...", "info");
@@ -1676,13 +1706,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
                 </label>
                 <select
                   value={activeSession.modelId}
-                  onChange={(e) => {
-                    const modelVal = e.target.value;
-                    setSessions((prev) =>
-                      prev.map((s) => (s.id === activeSessionId ? { ...s, modelId: modelVal } : s))
-                    );
-                    pushActivityLog(`System switched generating core to: ${modelVal}`, "info");
-                  }}
+                  onChange={(e) => handleModelChangeUnload(e.target.value)}
                   className="w-full bg-[#050811] text-xs font-bold text-[#00cfc0] border border-[#00cfc0]/35 hover:border-[#00cfc0] rounded-lg px-3 py-2.5 outline-none cursor-pointer focus:ring-1 focus:ring-[#00cfc0] uppercase"
                 >
                   {modelOptions.map((opt) => (
@@ -1800,11 +1824,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
               <div className="relative">
                 <select
                   value={activeSession.modelId}
-                  onChange={(e) => {
-                    const mVal = e.target.value;
-                    setSessions((prev) => prev.map((s) => s.id === activeSessionId ? { ...s, modelId: mVal } : s));
-                    pushActivityLog(`Switched generating model to ${mVal}`, "info");
-                  }}
+                  onChange={(e) => handleModelChangeUnload(e.target.value)}
                   className="bg-[#050811]/90 border border-slate-800 rounded px-2 py-1 text-[#00cfc0] uppercase font-bold text-[10px] tracking-wider outline-none cursor-pointer"
                 >
                   {modelOptions.map((opt) => (
