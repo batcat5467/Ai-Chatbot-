@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { Mail, Lock, Key, Check, AlertCircle, RefreshCw, LogIn, UserPlus } from "lucide-react";
 
 interface UserProfile {
@@ -33,6 +33,8 @@ export default function AuthModal({ onSuccess, onClose }: AuthModalProps) {
     setOtpCode("");
     setCodeHint(null);
   };
+
+
 
   // 1. Submit custom credentials signin / signup trigger
   const handleAuthSubmit = async (e: React.FormEvent) => {
