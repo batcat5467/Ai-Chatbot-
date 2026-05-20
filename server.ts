@@ -778,6 +778,7 @@ const defaultChatServers: ChatServer[] = [
     id: "server-1",
     name: "Nexus Portal Core",
     icon: "NP",
+    isGlobal: true,
     channels: [
       { id: "chan-11", name: "announcements", description: "Official system and cyber gateway updates." },
       { id: "chan-12", name: "general-chat", description: "The community lounge for portal explorers." },
@@ -788,6 +789,7 @@ const defaultChatServers: ChatServer[] = [
     id: "server-2",
     name: "AI Agents Guild",
     icon: "AI",
+    isGlobal: true,
     channels: [
       { id: "chan-21", name: "general-intellect", description: "Collaborate on next-gen models and LLMs." },
       { id: "chan-22", name: "prompt-engineers", description: "Fine-tune and perfect system directives." }

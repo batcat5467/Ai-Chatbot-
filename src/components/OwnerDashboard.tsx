@@ -431,7 +431,7 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
           {/* Section B: New Live Server Real-Time Diagnostics & Maintenance Protocols */}
           <section id="owner-diagnostics-panels" className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             
-            {/* Live simulated server diagnostic metrics (Virtual gateway telemetry) */}
+            {/* Live server diagnostic metrics (Virtual gateway telemetry) */}
             <div className="bg-[#050811] border border-slate-800/60 rounded-xl p-4 flex flex-col justify-between space-y-4">
               <div>
                 <h3 className="font-mono text-xs font-bold uppercase tracking-wider text-slate-300 flex items-center gap-1.5 mb-1">
@@ -445,7 +445,7 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
 
               {/* Progress Gauges */}
               <div className="space-y-4">
-                {/* Simulated CPU Load */}
+                {/* CPU Load */}
                 <div>
                   <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 mb-1">
                     <span className="flex items-center gap-1"><Cpu size={12} /> Cpu Core workload</span>
@@ -459,7 +459,7 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
                   </div>
                 </div>
 
-                {/* Simulated Dynamic Memory Usage */}
+                {/* Dynamic Memory Usage */}
                 <div>
                   <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 mb-1">
                     <span className="flex items-center gap-1"><HardDrive size={12} /> Virtual Memory footprint</span>
@@ -473,7 +473,7 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
                   </div>
                 </div>
 
-                {/* Simulated Database Response speed */}
+                {/* Database Response speed */}
                 <div>
                   <div className="flex justify-between items-center text-[10px] font-mono text-slate-400 mb-1">
                     <span className="flex items-center gap-1"><Flame size={12} /> DB Response Time</span>

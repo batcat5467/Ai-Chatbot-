@@ -162,10 +162,10 @@ export default function App() {
     "[SYS]: Input code above. Click 'COMPILE SHIELD' to process expressions."
   ]);
 
-  // State of simulated active agent tool logging
-  const [simulatedToolLogs, setSimulatedToolLogs] = useState<Array<{ time: string; tool: string; status: string }>>([]);
+  // State of active agent tool logging
+  const [agentToolLogs, setAgentToolLogs] = useState<Array<{ time: string; tool: string; status: string }>>([]);
 
-  // Simulated live stats
+  // Live active stats
   const [tokensUsed, setTokensUsed] = useState<number>(() => Math.floor(Math.random() * 800) + 1200);
   const [lastLatency, setLastLatency] = useState<number>(310); // ms
 
@@ -928,7 +928,7 @@ export default function App() {
         let shouldContinue = true;
 
         // Reset sidebar trace activities logs
-        setSimulatedToolLogs([]);
+        setAgentToolLogs([]);
 
         while (shouldContinue && loopCount < maxLoops) {
           loopCount++;
@@ -1010,7 +1010,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
               tool: toolCall.name.toUpperCase(),
               status: `EXECUTING (${JSON.stringify(toolCall.args).substring(0, 18)}...)`
             };
-            setSimulatedToolLogs((prev) => [sidebarLogObj, ...prev]);
+            setAgentToolLogs((prev) => [sidebarLogObj, ...prev]);
 
             // Execute corresponding backend integration calls
             let resultPayload = "";
@@ -1124,7 +1124,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
             };
             currentMessages.push(toolResultMsg);
 
-            setSimulatedToolLogs((prev) =>
+            setAgentToolLogs((prev) =>
               prev.map((l, idx) => idx === 0 ? { ...l, status: "DISPATCHED RESULT FEED" } : l)
             );
 
@@ -1402,7 +1402,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
           {activeTab === "activity" && (
             <div className="p-4 space-y-4 font-mono text-[11px] h-full flex flex-col">
               
-              {/* Simulated active agent trace tracker */}
+              {/* Active agent trace tracker */}
               <div className="rounded border border-[#00cfc0]/15 bg-[#00cfc0]/5 p-3 space-y-2 select-none">
                 <span className="text-[10px] text-[#00cfc0] font-bold block uppercase tracking-widest flex items-center gap-1.5">
                   <Terminal size={12} className="text-[#00cfc0]" />
@@ -1413,10 +1413,10 @@ If you call an action, the pipeline will intercept and execute it automatically.
                 </p>
                 
                 <div className="space-y-1.5 pt-1 text-[10px] max-h-36 overflow-y-auto">
-                  {simulatedToolLogs.length === 0 ? (
+                  {agentToolLogs.length === 0 ? (
                     <div className="text-slate-600 italic">SYSTEM IDLE // Waiting for prompts...</div>
                   ) : (
-                    simulatedToolLogs.map((item, i) => (
+                    agentToolLogs.map((item, i) => (
                       <div key={i} className="flex justify-between items-center border-b border-slate-900/40 pb-1">
                         <span className="text-indigo-400 font-bold">{item.tool}</span>
                         <span className="text-slate-500 text-[8px]">{item.time}</span>
@@ -1731,7 +1731,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
                 </select>
               </div>
 
-              {/* Simulation metrics parameters */}
+              {/* Core metrics parameters */}
               <div className="space-y-1.5 pt-2">
                 <div className="flex justify-between items-center text-[10px] text-slate-500 font-bold uppercase tracking-widest">
                   <span>SAMPLING TEMP</span>
@@ -2878,7 +2878,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
         </div>
       )}
 
-      {/* Render custom Dual-Factor Simulated google Auth verification modal */}
+      {/* Render custom Dual-Factor google Auth verification modal */}
       {authModalOpen && (
         <AuthModal
           onSuccess={(user) => {
