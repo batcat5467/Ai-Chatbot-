@@ -1607,6 +1607,51 @@ app.post("/api/admin/users/delete", (req, res) => {
   }
 });
 
+// 10. POST /api/admin/logs/clear - Wipe all event audit logs from the database
+app.post("/api/admin/logs/clear", (req, res) => {
+  try {
+    const { adminEmail } = req.body;
+    if (!adminEmail || !verifyAdminRole(adminEmail)) {
+      res.status(403).json({ error: "Requires administrator parameters." });
+      return;
+    }
+
+    const db = getDb();
+    db.systemLogs = [
+      {
+        timestamp: new Date().toISOString(),
+        level: "warning",
+        event: `Database audit log clear routine execution triggered by ${adminEmail}.`
+      }
+    ];
+    saveDb(db);
+    res.json({ success: true, message: "System logs successfully cleared." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 11. POST /api/admin/chat/reset - Restore chat channels, friends, and reset messages to default
+app.post("/api/admin/chat/reset", (req, res) => {
+  try {
+    const { adminEmail } = req.body;
+    if (!adminEmail || !verifyAdminRole(adminEmail)) {
+      res.status(403).json({ error: "Requires administrator parameters." });
+      return;
+    }
+
+    const db = getDb();
+    db.chatServers = defaultChatServers;
+    db.chatFriends = defaultChatFriends;
+    db.chatMessages = defaultChatMessages;
+    saveDb(db);
+    logAudit(`Chat bubble workspace structure was reset to defaults by executive ${adminEmail}`, "warning");
+    res.json({ success: true, message: "Chat bubble database reset to defaults." });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Start dev or production configuration
 async function startServer() {
   if (process.env.NODE_ENV !== "production") {
