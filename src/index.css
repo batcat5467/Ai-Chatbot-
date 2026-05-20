@@ -46,6 +46,18 @@
   border: 1px solid rgba(255, 255, 255, 0.02);
 }
 
+/* Light Theme Invert Strategy */
+html.light-theme {
+  filter: invert(1) hue-rotate(180deg) brightness(1.05);
+  background: #000; /* Dark background to ensure the inverted background is light */
+}
+
+/* Un-invert specific elements that should keep their natural colors */
+html.light-theme img,
+html.light-theme video {
+  filter: invert(1) hue-rotate(180deg);
+}
+
 /* Animations using keyframes */
 @keyframes fadeIn {
   from { opacity: 0; }

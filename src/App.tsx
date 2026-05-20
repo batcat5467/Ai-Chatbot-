@@ -40,6 +40,8 @@ import {
   Save,
   File,
   Download,
+  Sun,
+  Moon,
 } from "lucide-react";
 import Markdown from "react-markdown";
 import * as pdfjsLib from "pdfjs-dist";
@@ -144,6 +146,21 @@ export default function App() {
   useEffect(() => {
     localStorage.setItem("ai_agent_autopilot_mode", isAgentMode.toString());
   }, [isAgentMode]);
+  
+  // Theme state
+  const [isLightMode, setIsLightMode] = useState(() => {
+    const saved = localStorage.getItem("ai_theme_light");
+    return saved === "true";
+  });
+  
+  useEffect(() => {
+    localStorage.setItem("ai_theme_light", isLightMode.toString());
+    if (isLightMode) {
+      document.documentElement.classList.add("light-theme");
+    } else {
+      document.documentElement.classList.remove("light-theme");
+    }
+  }, [isLightMode]);
   
   const [vault, setVault] = useState<Record<string, string>>({});
   const [userSearchQuery, setUserSearchQuery] = useState("");
@@ -2009,6 +2026,16 @@ If you call an action, the pipeline will intercept and execute it automatically.
           {/* Active Settings sliding custom widget corner */}
           <div className="absolute top-4 right-4 z-10 select-none flex gap-2">
             <button
+              onClick={() => setIsLightMode(!isLightMode)}
+              className={`flex h-8 w-8 items-center justify-center rounded border transition-all cursor-pointer
+                ${isLightMode 
+                  ? "bg-[#00cfc0]/20 border-[#00cfc0] text-[#00cfc0] shadow-[0_0_8px_#00cfc0]"
+                  : "bg-[#0b101c]/80 border-slate-800 text-slate-400 hover:border-[#00cfc0]/40 hover:text-white"}`}
+              title="Toggle Light / Dark Mode"
+            >
+              {isLightMode ? <Sun size={13} /> : <Moon size={13} />}
+            </button>
+            <button
               onClick={() => setIsConfigOpen(!isConfigOpen)}
               className={`flex h-8 w-8 items-center justify-center rounded border transition-all cursor-pointer
                 ${isConfigOpen 
@@ -2467,14 +2494,16 @@ If you call an action, the pipeline will intercept and execute it automatically.
                     setIsAgentMode(!isAgentMode);
                     pushActivityLog(`Agent Autopilot mode toggled: ${!isAgentMode ? "ENABLED" : "DISABLED"}`, "info");
                   }}
-                  className={`flex items-center gap-1.5 px-2 py-0.5 rounded border transition-all cursor-pointer font-bold uppercase select-none tracking-wider text-[8px]
+                  className={`flex items-center gap-2 px-2 py-1 rounded-full border transition-all cursor-pointer font-bold uppercase select-none tracking-wider text-[8px]
                     ${isAgentMode 
                       ? "bg-emerald-950/25 border-emerald-500/40 text-[#4ade80]" 
                       : "bg-[#1b080d]/45 border-rose-500/40 text-rose-400"}`}
                   title="Toggle ReAct multi-step cognition"
                 >
-                  <span className={`h-1 w-1 rounded-full ${isAgentMode ? "bg-emerald-400 animate-pulse" : "bg-rose-500"}`}></span>
-                  COGNITIVE AUTOPILOT: {isAgentMode ? "ENABLED" : "OFFLINES"}
+                  <div className={`relative w-6 h-3 rounded-full transition-colors flex-shrink-0 ${isAgentMode ? "bg-emerald-500/50" : "bg-rose-900/50"}`}>
+                    <div className={`absolute top-0.5 left-0.5 h-2 w-2 rounded-full transition-transform duration-200 ${isAgentMode ? "bg-emerald-400 translate-x-3" : "bg-rose-500 translate-x-0"}`}></div>
+                  </div>
+                  <span>AGENT AUTOPILOT: {isAgentMode ? "ON" : "OFF"}</span>
                 </button>
               </div>
               <div className="font-mono flex items-center gap-1 uppercase">
