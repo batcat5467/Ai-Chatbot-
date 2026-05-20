@@ -42,6 +42,11 @@ import {
   Download,
 } from "lucide-react";
 import Markdown from "react-markdown";
+import * as pdfjsLib from "pdfjs-dist";
+import pdfWorkerSrc from "pdfjs-dist/build/pdf.worker.mjs?url";
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = pdfWorkerSrc;
+
 import { ASSISTANT_PERSONAS } from "./personas";
 import { ChatMessage, ChatSession, ModelOption } from "./types";
 import { CodeBlock } from "./components/CodeBlock";
@@ -123,6 +128,7 @@ export default function App() {
   const [isRightColOpen, setIsRightColOpen] = useState(false);
   const [openedSandboxFile, setOpenedSandboxFile] = useState<any | null>(null);
   const [sandboxFileEditedContent, setSandboxFileEditedContent] = useState("");
+  const [isPreviewMode, setIsPreviewMode] = useState(false);
   const [isExtractingArchive, setIsExtractingArchive] = useState(false);
   const [archiveUploadError, setArchiveUploadError] = useState<string | null>(null);
   const [sandboxSearchQuery, setSandboxSearchQuery] = useState("");
@@ -130,7 +136,15 @@ export default function App() {
   const [activeTab, setActiveTab] = useState<"activity" | "search" | "files" | "system" | "sandbox">("activity");
   
   // Real-time Agent autopilot variables
-  const [isAgentMode, setIsAgentMode] = useState(true);
+  const [isAgentMode, setIsAgentMode] = useState(() => {
+    const saved = localStorage.getItem("ai_agent_autopilot_mode");
+    return saved !== "false"; // Default true
+  });
+  
+  useEffect(() => {
+    localStorage.setItem("ai_agent_autopilot_mode", isAgentMode.toString());
+  }, [isAgentMode]);
+  
   const [vault, setVault] = useState<Record<string, string>>({});
   const [userSearchQuery, setUserSearchQuery] = useState("");
   const [userSearchResults, setUserSearchResults] = useState<Array<{ title: string; link: string; snippet: string }>>([]);
@@ -728,31 +742,69 @@ export default function App() {
     }
   };
 
-  // Handle image upload and converter (binary -> base64)
-  const handleImageFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // Handle file upload (images -> base64 visual payload, docs -> text extraction)
+  const handleImageFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
 
-    if (!file.type.startsWith("image/")) {
-      alert("Please upload a valid image file. (PNG, JPG, WEBP formats)");
-      return;
+    if (file.type.startsWith("image/")) {
+      const reader = new FileReader();
+      reader.onload = () => {
+        const result = reader.result as string;
+        const commaIndex = result.indexOf(",");
+        const base64Data = result.substring(commaIndex + 1);
+        setAttachedImage({
+          data: base64Data,
+          mimeType: file.type,
+        });
+        pushActivityLog(`Image payload staged: ${file.name} (${file.type})`, "info");
+        alert(`Successfully staged image: ${file.name}`);
+      };
+      reader.onerror = (err) => {
+        console.error("FileReader Error:", err);
+        alert("Failed to read image.");
+      };
+      reader.readAsDataURL(file);
+    } else {
+      try {
+        if (file.type === "application/pdf" || file.name.endsWith(".pdf")) {
+          const arrayBuffer = await file.arrayBuffer();
+          const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+          let text = "";
+          for (let i = 1; i <= pdf.numPages; i++) {
+            const page = await pdf.getPage(i);
+            const content = await page.getTextContent();
+            text += content.items.map((item: any) => item.str).join(" ") + "\n";
+          }
+          setInputText(prev => prev + `\n\n[Document: ${file.name}]\n${text}\n`);
+          pushActivityLog(`Successfully extracted ${pdf.numPages} pages from PDF ${file.name}`, "success");
+          alert(`Successfully parsed PDF: ${file.name}`);
+        } else {
+          // generic text read for .md, .txt, .csv, code files, etc.
+          const reader = new FileReader();
+          reader.onload = () => {
+            const text = reader.result as string;
+            setInputText(prev => prev + `\n\n[Document: ${file.name}]\n${text}\n`);
+            pushActivityLog(`Successfully extracted text from ${file.name}`, "success");
+            alert(`Successfully parsed file: ${file.name}`);
+          };
+          reader.onerror = () => {
+            alert("Failed to read file.");
+            pushActivityLog(`Failed to read file ${file.name}`, "error");
+          };
+          reader.readAsText(file);
+        }
+      } catch (err: any) {
+        console.error("File Parse Error:", err);
+        pushActivityLog(`Failed to parse file ${file.name}: ${err.message}`, "error");
+        alert(`Error parsing file: ${err.message}`);
+      }
     }
 
-    const reader = new FileReader();
-    reader.onload = () => {
-      const result = reader.result as string;
-      const commaIndex = result.indexOf(",");
-      const base64Data = result.substring(commaIndex + 1);
-      setAttachedImage({
-        data: base64Data,
-        mimeType: file.type,
-      });
-      pushActivityLog(`Image payload staged: ${file.name} (${file.type})`, "info");
-    };
-    reader.onerror = (err) => {
-      console.error("FileReader Error:", err);
-    };
-    reader.readAsDataURL(file);
+    // Reset input
+    if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+    }
   };
 
   // Trigger file dialog
@@ -2356,12 +2408,12 @@ If you call an action, the pipeline will intercept and execute it automatically.
               }}
               className="relative flex items-end gap-2 bg-[#050811] border border-[#00cfc0]/35 focus-within:border-[#00cfc0] focus-within:shadow-[0_0_12px_rgba(0,207,192,0.15)] rounded p-2.5 transition-all w-full"
             >
-              {/* Image attachment clip */}
+              {/* File attachment clip */}
               <button
                 type="button"
                 onClick={triggerImageUpload}
                 className="flex h-10 w-10 items-center justify-center rounded-lg border border-slate-850 text-slate-400 hover:text-[#00cfc0] hover:border-[#00cfc0]/30 cursor-pointer transition-colors flex-shrink-0 bg-[#060a13]"
-                title="Staged screenshot or high-res visual payload"
+                title="Staged screenshot or document payload (PDF, TXT, MD, etc)"
               >
                 <Paperclip size={14} />
               </button>
@@ -2370,7 +2422,7 @@ If you call an action, the pipeline will intercept and execute it automatically.
                 type="file"
                 ref={fileInputRef}
                 onChange={handleImageFileChange}
-                accept="image/*"
+                accept="image/*,.pdf,.txt,.md,.csv,.json,.js,.py,.ts,.html,.css"
                 className="hidden"
               />
 
@@ -2758,13 +2810,38 @@ If you call an action, the pipeline will intercept and execute it automatically.
             </div>
 
             {/* Custom Code Editor text block */}
-            <div className="flex-1 p-3">
-              <textarea
-                value={sandboxFileEditedContent}
-                onChange={(e) => setSandboxFileEditedContent(e.target.value)}
-                className="w-full h-full bg-[#03060c] border border-slate-850 hover:border-[#00cfc0]/35 rounded-lg p-3 text-[11px] text-slate-200 font-mono focus:border-[#00cfc0] outline-none resize-none leading-relaxed"
-                placeholder="// Enter sandboxed logs or code logic here..."
-              />
+            <div className="flex-1 p-3 flex flex-col">
+              <div className="flex bg-slate-900 border border-slate-800 rounded mb-2 overflow-hidden text-[10px] uppercase font-bold focus:outline-none flex-shrink-0">
+                <button
+                  onClick={() => setIsPreviewMode(false)}
+                  className={`flex-1 py-1.5 focus:outline-none ${!isPreviewMode ? 'bg-[#00cfc0]/20 text-[#00cfc0]' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  Raw Edit
+                </button>
+                <button
+                  onClick={() => setIsPreviewMode(true)}
+                  className={`flex-1 py-1.5 focus:outline-none ${isPreviewMode ? 'bg-[#00cfc0]/20 text-[#00cfc0]' : 'text-slate-500 hover:text-slate-300'}`}
+                >
+                  Preview Document
+                </button>
+              </div>
+              
+              <div className="flex-1 overflow-hidden">
+                {isPreviewMode ? (
+                  <div className="w-full h-full bg-[#03060c] border border-slate-850 rounded-lg p-3 text-[11px] text-slate-200 overflow-y-auto leading-relaxed overflow-x-hidden">
+                    <Markdown className="prose prose-invert prose-p:leading-relaxed prose-pre:bg-slate-900 prose-pre:border prose-pre:border-slate-800 max-w-none text-xs">
+                      {sandboxFileEditedContent}
+                    </Markdown>
+                  </div>
+                ) : (
+                  <textarea
+                    value={sandboxFileEditedContent}
+                    onChange={(e) => setSandboxFileEditedContent(e.target.value)}
+                    className="w-full h-full bg-[#03060c] border border-slate-850 hover:border-[#00cfc0]/35 rounded-lg p-3 text-[11px] text-slate-200 font-mono focus:border-[#00cfc0] outline-none resize-none leading-relaxed"
+                    placeholder="// Enter sandboxed logs or code logic here..."
+                  />
+                )}
+              </div>
             </div>
 
             {/* Actions Panel */}

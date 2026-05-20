@@ -1747,10 +1747,10 @@ app.post("/api/admin/users/update-role", (req, res) => {
   }
 });
 
-// 8. POST /api/admin/users/toggle-status - Block or Suspend user accounts
-app.post("/api/admin/users/toggle-status", (req, res) => {
+// 8. POST /api/admin/users/update-status - Change user account status
+app.post("/api/admin/users/update-status", (req, res) => {
   try {
-    const { adminEmail, targetUserEmail } = req.body;
+    const { adminEmail, targetUserEmail, newStatus } = req.body;
     if (!adminEmail || !verifyAdminRole(adminEmail)) {
       res.status(403).json({ error: "Requires administrator credentials." });
       return;
@@ -1770,12 +1770,11 @@ app.post("/api/admin/users/toggle-status", (req, res) => {
       return;
     }
 
-    const nextStatus = targetUser.status === "active" ? "suspended" : "active";
-    targetUser.status = nextStatus;
+    targetUser.status = newStatus;
     saveDb(db);
-    logAudit(`Account status updated: [${targetUser.email}] is now [${nextStatus.toUpperCase()}] by executive admin [${adminEmail}]`, nextStatus === "active" ? "info" : "error");
+    logAudit(`Account status updated: [${targetUser.email}] is now [${newStatus.toUpperCase()}] by executive admin [${adminEmail}]`, newStatus === "active" ? "info" : "error");
 
-    res.json({ success: true, message: `Account status toggled successfully to ${nextStatus}` });
+    res.json({ success: true, message: `Account status updated successfully to ${newStatus}` });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }

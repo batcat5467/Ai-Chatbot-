@@ -253,11 +253,11 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
   };
 
   // 3. Suspend / restore users
-  const handleToggleStatus = async (targetUserEmail: string) => {
+  const handleStatusChange = async (targetUserEmail: string, newStatus: "active" | "suspended") => {
     await handleAction(
-      "/api/admin/users/toggle-status",
-      { targetUserEmail },
-      `Swapped status for user [${targetUserEmail}].`
+      "/api/admin/users/update-status",
+      { targetUserEmail, newStatus },
+      `Updated status for user [${targetUserEmail}] to [${newStatus.toUpperCase()}].`
     );
   };
 
@@ -822,14 +822,19 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
                             )}
                           </td>
                           <td className="px-3 py-3.5 text-center">
-                            {user.status === "suspended" ? (
-                              <span className="text-[9px] font-bold uppercase px-2 py-0.5 border border-rose-900 bg-rose-950/40 text-rose-400 rounded">
-                                SUSPENDED
+                            {isMe || user.role === "owner" ? (
+                              <span className={`text-[9px] font-bold uppercase px-2 py-0.5 border rounded ${user.status === "suspended" ? "border-rose-900 bg-rose-950/40 text-rose-400" : "border-emerald-900 bg-emerald-950/40 text-emerald-400"}`}>
+                                {user.status.toUpperCase()}
                               </span>
                             ) : (
-                              <span className="text-[9px] font-bold uppercase px-2 py-0.5 border border-emerald-900 bg-emerald-950/40 text-emerald-400 rounded">
-                                ACTIVE
-                              </span>
+                              <select
+                                value={user.status}
+                                onChange={(e) => handleStatusChange(user.email, e.target.value as any)}
+                                className={`rounded px-1.5 py-0.5 text-[9px] font-bold uppercase font-mono focus:outline-none cursor-pointer border ${user.status === "suspended" ? "bg-rose-950/20 text-rose-400 border-rose-900/60" : "bg-emerald-950/20 text-emerald-400 border-emerald-900/60"}`}
+                              >
+                                <option value="active">ACTIVE</option>
+                                <option value="suspended">SUSPENDED</option>
+                              </select>
                             )}
                           </td>
                           <td className="px-5 py-3.5 text-right">
@@ -849,18 +854,6 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
 
                               {!isMe && user.role !== "owner" && (
                                 <>
-                                  {/* Toggle block/suspension */}
-                                  <button
-                                    onClick={() => handleToggleStatus(user.email)}
-                                    className={`px-2 py-1 rounded transition-all cursor-pointer font-bold text-[10px] uppercase border
-                                      ${user.status === "suspended"
-                                        ? "border-emerald-900/60 bg-emerald-950/10 text-emerald-400 hover:bg-emerald-900/20"
-                                        : "border-amber-900/60 bg-amber-950/10 text-amber-500 hover:bg-amber-900/20"}`}
-                                    title={user.status === "suspended" ? "Restore user privileges" : "Temporarily block account log-ins"}
-                                  >
-                                    <span>{user.status === "suspended" ? "Unban" : "Suspend"}</span>
-                                  </button>
-
                                   {/* Purge user */}
                                   <button
                                     onClick={() => handleDeleteUser(user.email)}
@@ -901,14 +894,19 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
                           <span className="text-[10px] text-slate-500 block">Joined: {signupStr}</span>
                         </div>
                         <div className="flex flex-col items-end gap-1.5 flex-shrink-0">
-                          {user.status === "suspended" ? (
-                            <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 border border-rose-900/60 bg-rose-950/40 text-rose-400 rounded">
-                              SUSPENDED
+                          {isMe || user.role === "owner" ? (
+                            <span className={`text-[8px] font-bold uppercase px-1.5 py-0.5 border rounded ${user.status === "suspended" ? "border-rose-900/60 bg-rose-950/40 text-rose-400" : "border-emerald-950 bg-emerald-950/40 text-emerald-400"}`}>
+                              {user.status.toUpperCase()}
                             </span>
                           ) : (
-                            <span className="text-[8px] font-bold uppercase px-1.5 py-0.5 border border-emerald-950 bg-emerald-950/40 text-emerald-400 rounded">
-                              ACTIVE
-                            </span>
+                            <select
+                              value={user.status}
+                              onChange={(e) => handleStatusChange(user.email, e.target.value as any)}
+                              className={`rounded px-1 py-0.5 text-[8px] font-bold uppercase font-mono focus:outline-none cursor-pointer border ${user.status === "suspended" ? "bg-rose-950/20 text-rose-400 border-rose-900/60" : "bg-emerald-950/20 text-emerald-400 border-emerald-900/60"}`}
+                            >
+                              <option value="active">ACTIVE</option>
+                              <option value="suspended">SUSPENDED</option>
+                            </select>
                           )}
                           <span className="text-[9px] text-slate-400">
                             {user.sessionCount} chats
@@ -966,25 +964,13 @@ export default function OwnerDashboard({ adminEmail, onClose }: OwnerDashboardPr
                         </button>
 
                         {!isMe && user.role !== "owner" && (
-                          <>
-                            <button
-                              onClick={() => handleToggleStatus(user.email)}
-                              className={`px-3 py-2 rounded text-[10px] uppercase font-bold transition-all cursor-pointer border min-h-[38px]
-                                ${user.status === "suspended"
-                                  ? "border-emerald-900 bg-emerald-950/10 text-emerald-400"
-                                  : "border-amber-900 bg-amber-950/10 text-amber-400"}`}
-                            >
-                              {user.status === "suspended" ? "Unban" : "Ban"}
-                            </button>
-
-                            <button
-                              onClick={() => handleDeleteUser(user.email)}
-                              className="p-2 border border-rose-950 bg-rose-950/10 text-rose-500 rounded cursor-pointer min-h-[38px] flex items-center justify-center"
-                              title="Delete Account"
-                            >
-                              <Trash2 size={13} />
-                            </button>
-                          </>
+                          <button
+                            onClick={() => handleDeleteUser(user.email)}
+                            className="p-2 border border-rose-950 bg-rose-950/10 text-rose-500 rounded cursor-pointer min-h-[38px] flex items-center justify-center"
+                            title="Delete Account"
+                          >
+                            <Trash2 size={13} />
+                          </button>
                         )}
                       </div>
                     </div>
