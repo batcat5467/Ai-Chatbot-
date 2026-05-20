@@ -1,0 +1,6 @@
+{
+  "name": "AI Chat Portal",
+  "description": "A futuristic full-stack AI workspace with custom assistant personas, sandboxed script compilers, large file upload parsers, and live LM Studio offline model interlinks.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
